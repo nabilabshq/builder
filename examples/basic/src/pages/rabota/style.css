@@ -1,0 +1,13 @@
+.in-page-style {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 200px;
+  height: 100px;
+  margin-top: 64px;
+  border-radius: 12px;
+  background-color: #fff;
+  color: #212022;
+  font-weight: 600;
+  font-size: 18px;
+}

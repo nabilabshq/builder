@@ -1,0 +1,26 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: transform 160ms ease, opacity 160ms ease;
+
+  &[data-variant="primary"] {
+    background: #6d4aff;
+    color: #fff;
+  }
+
+  &[data-variant="secondary"] {
+    background: #fff0da;
+    color: #7a3d00;
+  }
+
+  &:hover {
+    transform: translateY(-1px);
+    opacity: 0.9;
+  }
+}

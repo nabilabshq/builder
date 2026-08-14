@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.nabi-build-temp/
+.nabi-build-backup/
+.nabi-cache/

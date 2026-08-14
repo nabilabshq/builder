@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+  <use ref="head" title="Nabi Builder — components" description="Минимальный HTML builder example.">
+    <link use="base.css" />
+    <link use="home.css" />
+  </use>
+  <body>
+    <main class="page container">
+      <p class="eyebrow">@nabilabs/builder</p>
+      <h1>HTML components without runtime</h1>
+      <p class="intro">Три static pages используют один набор компонентов, shared styles и page-level scripts.</p>
+
+      <section class="card-grid" aria-label="Routes">
+        <use ref="card" title="Работа" variant="violet">
+          <p>Показывает named slots, page CSS и отдельный shared JavaScript.</p>
+          <use ref="button" slot="footer" href="/rabota" variant="primary">Открыть работу</use>
+        </use>
+        <use ref="card" title="Студентам" variant="orange">
+          <p>Та же component system, но собственный route и контент.</p>
+          <use ref="button" slot="footer" href="/students" variant="secondary">Открыть страницу</use>
+        </use>
+      </section>
+    </main>
+    <use ref="footer" year="2026"></use>
+    <script use="site.js" defer></script>
+  </body>
+</html>

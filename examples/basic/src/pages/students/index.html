@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru">
+  <use ref="head" title="Студентам — Nabi Builder" description="Отдельный file route для студентов.">
+    <link use="base.css" />
+  </use>
+  <body>
+    <main class="page container">
+      <a class="back-link" href="/">← На главную</a>
+      <p class="eyebrow">/students</p>
+      <h1>Учёба и практика</h1>
+
+      <use ref="card" title="Первый проект" variant="orange">
+        <p>Карточка и footer component используются повторно без client runtime.</p>
+        <use ref="button" slot="footer" href="/rabota" variant="secondary">Посмотреть работу</use>
+      </use>
+    </main>
+    <use ref="footer" year="2026"></use>
+    <script use="site.js" defer></script>
+  </body>
+</html>

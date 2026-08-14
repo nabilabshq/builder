@@ -1,0 +1,30 @@
+.footer {
+  margin-top: 64px;
+  padding: 24px 0;
+  border-top: 1px solid #dedbea;
+  color: #675d83;
+
+  nav,
+  .inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .columns {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+
+  img {
+    width: 24px;
+    height: 24px;
+  }
+
+  a {
+    color: inherit;
+  }
+}

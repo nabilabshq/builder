@@ -1,0 +1,40 @@
+.card {
+  display: grid;
+  margin-top: 32px;
+  padding: 24px;
+  gap: 16px;
+  border: 1px solid #dedbea;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgb(32 24 67 / 8%);
+
+  &[data-variant="dark"] {
+    border-top: 5px solid #ff9e45;
+    color: #212022;
+  }
+
+  &[data-variant="orange"] {
+    border-top: 5px solid #ff9e45;
+  }
+
+  h2 {
+    font-size: 20px;
+  }
+
+  p {
+    font-size: 18px;
+    line-height: 1.5;
+  }
+
+  .header:empty,
+  .footer:empty {
+    display: none;
+  }
+
+  .header {
+    color: #675d83;
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+  }
+}

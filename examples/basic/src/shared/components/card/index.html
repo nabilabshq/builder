@@ -1,0 +1,19 @@
+---
+variant: dark | orange
+theme: light | dark
+---
+
+<article class="card" data-variant="{{variant}}">
+  <header class="header">
+    <slot name="header">
+      <p>Reusable component</p>
+    </slot>
+  </header>
+  <h2>{{title}}</h2>
+  <div class="content">
+    <slot></slot>
+  </div>
+  <footer class="footer">
+    <slot name="footer"></slot>
+  </footer>
+</article>

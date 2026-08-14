@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Dev",
+      "command": "bun run dev",
+      "request": "launch",
+      "type": "node-terminal",
+      "cwd": "${workspaceFolder}/examples/basic"
+    },
+    {
+      "name": "Build",
+      "command": "bun run build",
+      "request": "launch",
+      "type": "node-terminal",
+      "cwd": "${workspaceFolder}/examples/basic"
+    },
+    {
+      "name": "Build: Inline",
+      "command": "bun run build:inline",
+      "request": "launch",
+      "type": "node-terminal",
+      "cwd": "${workspaceFolder}/examples/basic"
+    }
+  ]
+}

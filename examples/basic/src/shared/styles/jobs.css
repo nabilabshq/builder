@@ -1,0 +1,13 @@
+body {
+  background: #212022;
+  color: #fffaf5;
+}
+
+.page > .card {
+  max-width: 640px;
+}
+
+.card .header > p {
+  color: #6d4aff;
+  font-weight: 700;
+}

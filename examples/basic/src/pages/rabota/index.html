@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+  <use ref="head" title="Работа — Nabi Builder" description="Страница с named slots и shared dependencies.">
+    <link use="base.css" />
+    <link use="jobs.css" />
+  </use>
+
+  <body>
+    <main class="page container">
+      <a class="back-link" href="/">← На главную</a>
+      <p class="eyebrow">/rabota</p>
+      <h1>Работа, которую легко собрать</h1>
+
+      <use ref="card" title="Гибкий график" variant="dark">
+        <p slot="header">Named slot: header</p>
+        <p>Default slot остаётся обычным HTML и может содержать <strong>любую разметку</strong>.</p>
+        <use ref="button" slot="footer" href="/students" variant="primary" type="button">Страница для студентов</use>
+      </use>
+
+      <p class="in-page-style">in-page-style</p>
+    </main>
+    <use ref="footer" year="2026"></use>
+    <script use="site.js" defer></script>
+    <script use="jobs.js" defer></script>
+  </body>
+</html>

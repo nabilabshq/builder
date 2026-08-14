@@ -1,0 +1,70 @@
+{
+  "name": "@nabilabs/builder",
+  "version": "0.1.0",
+  "publisher": "nabilabs",
+  "displayName": "Nabi Builder",
+  "description": "Deterministic static HTML component builder",
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "bun@1.3.14",
+  "bin": {
+    "nabi": "./src/cli.js",
+    "nabi-language-server": "./src/language-server.js"
+  },
+  "exports": "./src/index.js",
+  "scripts": {
+    "test": "node --test",
+    "build": "node ./src/cli.js build",
+    "dev": "node ./src/cli.js dev",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"{src,test}/**/*.js\" \"examples/**/src/**/*.js\" \"*.js\"",
+    "format:check": "prettier --check \"{src,test}/**/*.js\" \"examples/**/src/**/*.js\" \"*.js\"",
+    "check": "bun run lint && bun run format:check && bun test",
+    "prepublishOnly": "bun run check"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "html-minifier-terser": "^7.2.0",
+    "lightningcss": "^1.33.0",
+    "parse5": "^8.0.0",
+    "terser": "^5.50.0",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12",
+    "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "eslint": "^9.39.0",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "globals": "^17.4.0",
+    "prettier": "^3.8.1"
+  },
+  "keywords": [
+    "nabi",
+    "html",
+    "ssg",
+    "static-site-generator",
+    "components",
+    "build-tool"
+  ],
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nabilabs/builder.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nabilabs/builder/issues"
+  },
+  "homepage": "https://github.com/nabilabs/builder#readme"
+}

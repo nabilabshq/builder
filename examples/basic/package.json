@@ -1,0 +1,14 @@
+{
+  "name": "nabi-basic-example",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun",
+  "scripts": {
+    "dev": "node ../../src/cli.js dev",
+    "build": "node ../../src/cli.js build",
+    "build:inline": "node ../../src/cli.js build --mode inline"
+  },
+  "devDependencies": {
+    "@nabilabs/builder": "file:../.."
+  }
+}
