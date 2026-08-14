@@ -1,6 +1,6 @@
 {
   "name": "@nabilabs/builder",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "nabilabs",
   "displayName": "Nabi Builder",
   "description": "Deterministic static HTML component builder",
@@ -61,10 +61,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nabilabs/builder.git"
+    "url": "git+https://github.com/nabilabshq/builder.git"
   },
   "bugs": {
-    "url": "https://github.com/nabilabs/builder/issues"
+    "url": "https://github.com/nabilabshq/builder/issues"
   },
-  "homepage": "https://github.com/nabilabs/builder#readme"
+  "homepage": "https://github.com/nabilabshq/builder#readme"
 }
