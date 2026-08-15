@@ -1,6 +1,6 @@
 {
   "name": "@nabilabs/builder",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "nabilabs",
   "displayName": "Nabi Builder",
   "description": "Deterministic static HTML component builder",
@@ -20,7 +20,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"{src,test}/**/*.js\" \"examples/**/src/**/*.js\" \"*.js\"",
     "format:check": "prettier --check \"{src,test}/**/*.js\" \"examples/**/src/**/*.js\" \"*.js\"",
-    "check": "bun run lint && bun run format:check && bun test",
+    "pack:check": "bun pm pack --dry-run --ignore-scripts",
+    "check": "bun run lint && bun run format:check && bun run test",
     "prepublishOnly": "bun run check"
   },
   "engines": {

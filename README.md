@@ -8,13 +8,52 @@
 bun add -d @nabilabs/builder
 ```
 
-Add scripts to the website project:
+## Initialize a project
+
+Create a small Nabi starter project in the current directory:
+
+```bash
+bunx -p @nabilabs/builder nabi init
+```
+
+Pass a directory to create the starter there:
+
+```bash
+bunx -p @nabilabs/builder nabi init my-site
+```
+
+The starter contains two pages, three shared components, shared CSS, and a shared JavaScript file. It also adds missing Nabi scripts to `package.json` without replacing existing scripts. When `package.json` is absent, Nabi runs `bun init -y` and installs `@nabilabs/builder` as a development dependency. The command is safe to run repeatedly and never overwrites existing starter files:
+
+```text
+src/
+  pages/
+    index.html
+    project/
+      index.html
+  shared/
+    components/
+      button/
+        index.html
+        style.css
+      head/
+        index.html
+      footer/
+        index.html
+        style.css
+    styles/
+      base.css
+    js/
+      site.js
+```
+
+The generated package scripts are:
 
 ```json
 {
   "scripts": {
     "dev": "nabi dev",
-    "build": "nabi build"
+    "build": "nabi build",
+    "build:inline": "nabi build --mode inline"
   }
 }
 ```
@@ -24,6 +63,7 @@ Add scripts to the website project:
 ```bash
 bun run dev
 bun run build
+nabi init [directory]
 nabi build --mode inline
 nabi clean
 ```
@@ -330,14 +370,15 @@ For VS Code, install the Nabi extension. It finds the nearest local `@nabilabs/b
 bun run lint
 bun run format:check
 bun run check
+bun run pack:check
 ```
 
-`bun run check` runs ESLint, Prettier validation, and the complete test suite. The same check runs automatically before publishing.
+`bun run check` runs ESLint, Prettier validation, and the complete test suite. `bun run pack:check` verifies the npm package contents. The same quality check runs automatically before publishing.
 
 ## Public API
 
 ```js
-import { build, clean, compilePage, discoverPages, loadConfig, startDev } from "@nabilabs/builder";
+import { build, clean, compilePage, discoverPages, init, loadConfig, startDev } from "@nabilabs/builder";
 
 await build({ mode: "split" });
 ```
