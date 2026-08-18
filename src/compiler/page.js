@@ -4,6 +4,12 @@ import { NabiError } from "../utils/errors.js";
 
 const parserOptions = { sourceCodeLocationInfo: true };
 const placeholder = /{{([\w:-]+)}}/g;
+const compactUseAttribute = "data-nabi-self-closing";
+const normaliseCompactTags = (source) =>
+  source
+    .replace(/<slot(\s[^>]*)?\/\s*>/gi, "<slot$1></slot>")
+    .replace(/<script(?=\s[^>]*\buse\s*=)(\s[^>]*)?\/\s*>/gi, "<script$1></script>")
+    .replace(/<use\b([^>]*\bref\s*=[^>]*)\/\s*>/gi, `<use$1 ${compactUseAttribute}=""></use>`);
 
 const annotateTagNames = (node, source) => {
   if (node.tagName && node.sourceCodeLocation?.startTag) {
@@ -24,11 +30,12 @@ const parseDocument = (source) => {
 };
 
 const parseFragment = (source) => {
+  const normalisedSource = normaliseCompactTags(source);
   const fragment = parse5.parseFragment(
-    source.replaceAll("{{...props}}", 'data-nabi-props-placeholder=""'),
+    normalisedSource.replaceAll("{{...props}}", 'data-nabi-props-placeholder=""'),
     parserOptions,
   );
-  annotateTagNames(fragment, source);
+  annotateTagNames(fragment, normalisedSource);
   return fragment;
 };
 
@@ -46,7 +53,9 @@ const escapeText = (value) => String(value);
 
 const propsFrom = (node) =>
   Object.fromEntries(
-    (node.attrs ?? []).map((attribute) => [attribute.name, attribute.value === "" ? "true" : attribute.value]),
+    (node.attrs ?? [])
+      .filter((attribute) => attribute.name !== compactUseAttribute)
+      .map((attribute) => [attribute.name, attribute.value === "" ? "true" : attribute.value]),
   );
 
 const interpolateValue = (value, props) =>
@@ -143,8 +152,15 @@ const componentError = (message, context, node) =>
 const slotError = ({ component, state, message }) =>
   componentError(`${message}\n\nComponent:\n${component.path}`, state);
 
-const validateSlots = ({ component, slots, template, state }) => {
+const validateSlots = ({ component, slots, template, state, isSelfClosing }) => {
   const available = templateSlots(template.childNodes);
+  const hasContent = [...slots.values()].some(hasMeaningfulContent);
+  if (!isSelfClosing && !available.has("default") && !hasContent)
+    throw slotError({
+      component,
+      state,
+      message: `Component "${component.ref}" does not define a default slot. Use <use ref="${component.ref}" />.`,
+    });
   for (const [name, nodes] of slots) {
     if (!hasMeaningfulContent(nodes) || available.has(name)) continue;
     if (name === "default")
@@ -176,15 +192,27 @@ const compileNodes = (nodes, state) => {
     const ref = attributeValue(node, "ref");
     if (ref === undefined) {
       throw componentError(
-        `Invalid component invocation: required attribute "ref" is missing\n\nFound:\n${sourceTag(node, state.source)}\n\nExpected:\n<use ref="button">Button text</use>`,
+        `Invalid component invocation: required attribute "ref" is missing\n\nFound:\n${sourceTag(node, state.source)}\n\nExpected:\n<use ref="ui/button">Button text</use>`,
         state,
         node,
       );
     }
-    const component = state.registry.get(ref);
+    let component;
+    try {
+      component = state.registry.get(ref);
+    } catch (error) {
+      throw componentError(error instanceof Error ? error.message : String(error), state, node);
+    }
     if (!component)
       throw componentError(
         `Component not found: "${ref}"\n\nExpected:\n${state.registry.expectedPath(ref)}`,
+        state,
+        node,
+      );
+    const [rootRef, ...nestedSegments] = component.ref.split("/");
+    if (component.scope === "local" && nestedSegments.length && state.owner !== rootRef)
+      throw componentError(
+        `Nested local component "${component.ref}" is private to "${rootRef}"\n\nUse it only inside ${rootRef}/index.html.`,
         state,
         node,
       );
@@ -193,18 +221,26 @@ const compileNodes = (nodes, state) => {
       throw componentError(`Circular component dependency:\n\n${chain}`, state, node);
     }
     state.onComponentResolved?.(component);
+    const isSelfClosing = attributeValue(node, compactUseAttribute) !== undefined;
     const projectedSlots = slotChildren(node.childNodes ?? []);
     const template = parseTemplate(component);
-    validateSlots({ component, slots: projectedSlots, template, state });
+    validateSlots({ component, slots: projectedSlots, template, state, isSelfClosing });
     for (const [name, children] of projectedSlots) projectedSlots.set(name, compileNodes(children, state));
     const props = propsFrom(node);
     delete props.ref;
     const consumedProps = new Set([...placeholderKeys(component.template), ...component.props]);
     const forwardedProps = (node.attrs ?? []).filter(
-      (attribute) => !consumedProps.has(attribute.name) && !["ref", "slot"].includes(attribute.name),
+      (attribute) =>
+        !consumedProps.has(attribute.name) && !["ref", "slot", compactUseAttribute].includes(attribute.name),
     );
     const interpolated = processTemplate(template.childNodes, props, projectedSlots, forwardedProps);
-    const compiled = compileNodes(interpolated, { ...state, stack: [...state.stack, component.ref] });
+    const compiled = compileNodes(interpolated, {
+      ...state,
+      page: component.path,
+      source: component.template,
+      owner: component.ref,
+      stack: [...state.stack, component.ref],
+    });
     if (component.isHeadTemplate) state.headNodes.push(...compiled);
     else result.push(...compiled);
   }
@@ -212,9 +248,18 @@ const compileNodes = (nodes, state) => {
 };
 
 export const compilePage = async ({ source, registry, page = "page.html", onComponentResolved }) => {
-  const document = parseDocument(source);
+  const normalisedSource = normaliseCompactTags(source);
+  const document = parseDocument(normalisedSource);
   const head = findHead(document);
-  const state = { registry, page, source, stack: [], onComponentResolved, headNodes: [] };
+  const state = {
+    registry,
+    page,
+    source: normalisedSource,
+    owner: undefined,
+    stack: [],
+    onComponentResolved,
+    headNodes: [],
+  };
   document.childNodes = compileNodes(document.childNodes, state);
   if (head && state.headNodes.length) head.childNodes.push(...state.headNodes);
   return parse5.serialize(document);

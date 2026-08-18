@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 
 import { NabiError } from "./utils/errors.js";
 
-const directories = ["src/pages", "src/shared/components", "src/shared/styles", "src/shared/js"];
+const directories = ["src/pages", "src/ui", "src/shared/styles", "src/shared/js"];
 const starterScripts = {
   dev: "nabi dev",
   build: "nabi build",
@@ -14,7 +14,7 @@ const starterFiles = {
   "src/pages/index.html": `<!doctype html>
 <html lang="en">
   <head>
-    <use ref="head" title="Nabi starter"></use>
+    <use ref="ui/head" title="Nabi starter" />
   </head>
   <body>
     <main class="welcome">
@@ -22,18 +22,18 @@ const starterFiles = {
       <h1>Build plain HTML with reusable components.</h1>
       <p class="welcome__copy">Start with this small multi-page project, then make it your own.</p>
       <div class="welcome__actions">
-        <use ref="button" href="/project" variant="primary">Open the project</use>
-        <use ref="button" href="https://github.com/nabilabshq/builder" variant="secondary" target="_blank">Read the guide</use>
+        <use ref="ui/button" href="/project" variant="primary">Open the project</use>
+        <use ref="ui/button" href="https://github.com/nabilabshq/builder" variant="secondary" target="_blank">Read the guide</use>
       </div>
     </main>
-    <use ref="footer"></use>
+    <use ref="ui/footer" />
   </body>
 </html>
 `,
   "src/pages/project/index.html": `<!doctype html>
 <html lang="en">
   <head>
-    <use ref="head" title="Nabi project"></use>
+    <use ref="ui/head" title="Nabi project" />
   </head>
   <body>
     <main class="welcome">
@@ -41,20 +41,20 @@ const starterFiles = {
       <h1>Your first Nabi project is ready.</h1>
       <p class="welcome__copy">Pages follow the file system, while components stay shared and predictable.</p>
       <div class="welcome__actions">
-        <use ref="button" href="/" variant="primary">Back home</use>
-        <use ref="button" href="https://github.com/nabilabshq/builder" variant="secondary" target="_blank">View documentation</use>
+        <use ref="ui/button" href="/" variant="primary">Back home</use>
+        <use ref="ui/button" href="https://github.com/nabilabshq/builder" variant="secondary" target="_blank">View documentation</use>
       </div>
     </main>
-    <use ref="footer"></use>
+    <use ref="ui/footer" />
   </body>
 </html>
 `,
-  "src/shared/components/button/index.html": `---
+  "src/ui/button/index.html": `---
 variants: primary | secondary
 ---
-<a class="button button--{{variant}}" href="{{href}}" {{...props}}><slot></slot></a>
+<a class="button button--{{variant}}" href="{{href}}" {{...props}}><slot /></a>
 `,
-  "src/shared/components/button/style.css": `.button {
+  "src/ui/button/style.css": `.button {
   align-items: center;
   border: 1px solid transparent;
   border-radius: 999px;
@@ -83,21 +83,21 @@ variants: primary | secondary
   }
 }
 `,
-  "src/shared/components/head/index.html": `<head>
+  "src/ui/head/index.html": `<head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="A Nabi static website starter.">
   <title>{{title}}</title>
-  <link use="base.css">
-  <script use="site.js" defer></script>
+  <link use="base.css" />
+  <script use="site.js" defer />
 </head>
 `,
-  "src/shared/components/footer/index.html": `<footer class="footer">
+  "src/ui/footer/index.html": `<footer class="footer">
   <p>Built with Nabi.</p>
   <a href="/">Back to home</a>
 </footer>
 `,
-  "src/shared/components/footer/style.css": `.footer {
+  "src/ui/footer/style.css": `.footer {
   align-items: center;
   border-top: 1px solid #e6e6ef;
   color: #69697c;

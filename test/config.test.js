@@ -17,9 +17,25 @@ test("loads optional nabi.config.js with production defaults", async () => {
     assert.equal(config.outDir, "public");
     assert.equal(config.dev.port, 4173);
     assert.equal(config.baseRoute, "partner/rabota");
+    assert.equal(config.pagesDir, "pages");
+    assert.equal(config.pagesPath, join(root, "src/pages"));
+    assert.equal(config.sharedDir, "shared");
+    assert.equal(config.sharedPath, join(root, "src/shared"));
     assert.deepEqual(config.minify, { html: true, css: true, js: false });
     assert.deepEqual(config.images, { optimize: true });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("requires pagesDir to be a single directory inside src", async () => {
+  await assert.rejects(
+    () => loadConfig({ config: { pagesDir: "src/partner" } }),
+    /pagesDir must be a single directory name inside src/,
+  );
+  await assert.rejects(
+    () => loadConfig({ config: { pagesDir: "partner/second" } }),
+    /pagesDir must be a single directory name inside src/,
+  );
+  await assert.rejects(() => loadConfig({ config: { sharedDir: "src/shared" } }), /sharedDir is relative to src/);
 });

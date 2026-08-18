@@ -30,12 +30,4 @@ export default defineConfig(
       "simple-import-sort/exports": "error",
     },
   },
-  {
-    files: ["examples/**/src/**/*.js"],
-    languageOptions: {
-      ecmaVersion: "latest",
-      sourceType: "module",
-      globals: globals.browser,
-    },
-  },
 );

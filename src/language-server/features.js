@@ -18,12 +18,25 @@ import { pathFromUri, uriFromPath } from "./project.js";
 
 const preview = (language, source) => `\`\`\`${language}\n${source.trim().slice(0, 1800)}\n\`\`\``;
 
-const componentItem = (metadata) => ({
+const componentProps = (metadata) => {
+  if (!metadata.props.length) return "";
+  const entries = metadata.props.map((name) => {
+    const values = metadata.propValues[name];
+    return values?.length ? `${name}: ${values.map((value) => `[${value}]`).join(" ")}` : name;
+  });
+  return `**Component props**  \n${entries.join("  \n")}\n\n---`;
+};
+
+const componentItem = (metadata, range) => ({
   label: metadata.name,
   kind: CompletionItemKind.Class,
   detail: "Component",
-  documentation: { kind: "markdown", value: preview("html", metadata.component.template) },
+  documentation: {
+    kind: "markdown",
+    value: `${componentProps(metadata)}\n\n${preview("html", metadata.component.template)}`,
+  },
   insertText: metadata.name,
+  ...(range ? { textEdit: { range, newText: metadata.name } } : {}),
 });
 
 const sharedItem = ({ value, type, preview: source }) => ({
@@ -47,11 +60,15 @@ const propValueItem = (value) => ({
   insertText: value,
 });
 const matches = (items, prefix) => items.filter((item) => item.label.startsWith(prefix));
+const componentMatches = (items, prefix) =>
+  items.filter((item) => item.label.toLowerCase().startsWith(prefix.toLowerCase()));
 
 const triggerSuggest = { title: "Show completion suggestions", command: "editor.action.triggerSuggest" };
 
-const attributeItem = ({ name, detail, documentation, cursor }) => ({
+const attributeItem = ({ name, detail, documentation, cursor, sortText, preselect = false }) => ({
   label: name,
+  sortText,
+  preselect,
   kind: CompletionItemKind.Property,
   detail,
   documentation,
@@ -60,11 +77,43 @@ const attributeItem = ({ name, detail, documentation, cursor }) => ({
   command: triggerSuggest,
 });
 
-const propItem = ({ name, cursor }) => attributeItem({ name, detail: "Component prop", cursor });
+const propItem = ({ name, values, cursor }) =>
+  attributeItem({
+    name,
+    detail: values?.length ? `Component prop: ${values.join(" | ")}` : "Component prop",
+    documentation: values?.length ? `Allowed values: ${values.join(", ")}.` : undefined,
+    cursor,
+    sortText: `0_${name}`,
+    preselect: true,
+  });
 
-const completionForComponent = async ({ context, filePath, prefix }) => {
-  const metadata = await context.componentMetadata(filePath);
-  return matches([...metadata.values()].map(componentItem), prefix);
+const nestedLocalComponent = (component) =>
+  component.scope === "local" && component.ref.startsWith("@") && component.ref.split("/").length > 1;
+const localComponentRoot = (component) => component.ref.split("/")[0];
+const isAvailableComponent = ({ component, owner }) =>
+  (!nestedLocalComponent(component) || owner === localComponentRoot(component)) && component.ref !== owner;
+const privateComponentMessage = (component) =>
+  `Nested local component "${component.ref}" is private to "${localComponentRoot(component)}"`;
+const unavailableComponentMessage = ({ component, owner }) =>
+  component.ref === owner ? `Component "${component.ref}" cannot reference itself` : privateComponentMessage(component);
+
+const compareComponentMetadata = (left, right) => {
+  const priority = Number(nestedLocalComponent(right.component)) - Number(nestedLocalComponent(left.component));
+  return priority || left.name.localeCompare(right.name);
+};
+
+const completionForComponent = async ({ context, filePath, prefix, range }) => {
+  const [metadata, owner] = await Promise.all([
+    context.componentMetadata(filePath),
+    context.localComponentOwner(filePath),
+  ]);
+  return componentMatches(
+    [...metadata.values()]
+      .filter((entry) => isAvailableComponent({ component: entry.component, owner }))
+      .sort(compareComponentMetadata)
+      .map((entry) => componentItem(entry, range)),
+    prefix,
+  );
 };
 
 const completionForShared = async ({ context, type, prefix }) =>
@@ -79,7 +128,7 @@ export const completionsFor = async ({ projects, uri, text, position }) => {
   const context = await projects.contextForUri(uri);
   const filePath = pathFromUri(uri);
   if (cursor.tag === "use" && cursor.attribute === "ref")
-    return completionForComponent({ context, filePath, prefix: cursor.prefix });
+    return completionForComponent({ context, filePath, prefix: cursor.prefix, range: cursor.range });
   if (cursor.tag === "use" && cursor.attribute && cursor.attributes.has("ref")) {
     const metadata = (await context.componentMetadata(filePath)).get(cursor.attributes.get("ref"));
     return metadata?.propValues[cursor.attribute]
@@ -120,7 +169,7 @@ export const completionsFor = async ({ projects, uri, text, position }) => {
         attributeItem({
           name: "ref",
           detail: "Nabi component reference",
-          documentation: "Component name from `shared/components` or local `components`.",
+          documentation: "Namespaced global component or page-local `@` component reference.",
           cursor,
         }),
       ],
@@ -128,7 +177,9 @@ export const completionsFor = async ({ projects, uri, text, position }) => {
     );
   const metadata = (await context.componentMetadata(filePath)).get(cursor.attributes.get("ref"));
   if (!metadata) return [];
-  return metadata.props.filter((name) => !cursor.attributes.has(name)).map((name) => propItem({ name, cursor }));
+  return metadata.props
+    .filter((name) => !cursor.attributes.has(name))
+    .map((name) => propItem({ name, values: metadata.propValues[name], cursor }));
 };
 
 const attributeAt = ({ text, position }) => {
@@ -151,6 +202,8 @@ export const definitionFor = async ({ projects, uri, text, position }) => {
   if (isHtmlElement(found.node, "use") && found.attribute.name === "ref") {
     try {
       const component = (await context.registryFor(filePath)).get(found.attribute.value);
+      const owner = await context.localComponentOwner(filePath);
+      if (component && !isAvailableComponent({ component, owner })) return [];
       return component ? [{ uri: uriFromPath(component.path), range: rangeAt("", 0, 0) }] : [];
     } catch {
       return [];
@@ -176,15 +229,53 @@ export const definitionFor = async ({ projects, uri, text, position }) => {
   }
 };
 
+export const documentLinksFor = async ({ projects, uri, text }) => {
+  const context = await projects.contextForUri(uri);
+  const filePath = pathFromUri(uri);
+  const [registry, owner] = await Promise.all([context.registryFor(filePath), context.localComponentOwner(filePath)]);
+  const links = [];
+  visitElements(parseHtml(text), (node) => {
+    if (!isHtmlElement(node, "use")) return;
+    const ref = node.attrs?.find((attribute) => attribute.name === "ref");
+    if (!ref) return;
+    try {
+      const component = registry.get(ref.value);
+      if (!component || !isAvailableComponent({ component, owner })) return;
+      links.push({ range: attributeValueRange({ text, node, attribute: ref }), target: uriFromPath(component.path) });
+    } catch {
+      // Diagnostics report invalid refs; they are not links.
+    }
+  });
+  return links;
+};
+
 const diagnostic = ({ message, range }) => ({ range, message, severity: DiagnosticSeverity.Error, source: "nabi" });
 const readableError = (error) => (error instanceof NabiError ? error.message.split("\n")[0] : error.message);
+const hasDefaultSlotContent = (node) =>
+  (node.childNodes ?? []).some((child) => {
+    const slot = child.attrs?.find((attribute) => attribute.name === "slot");
+    if (slot?.value) return false;
+    return child.nodeName !== "#text" || child.value?.trim();
+  });
+const hasSlotContent = (node) =>
+  (node.childNodes ?? []).some((child) => child.nodeName !== "#text" || child.value?.trim());
+const isSelfClosingUse = ({ text, node }) => {
+  const tag = node.sourceCodeLocation?.startTag;
+  return tag ? /\/\s*>$/.test(text.slice(tag.startOffset, tag.endOffset)) : false;
+};
 
 export const diagnosticsFor = async ({ projects, uri, text }) => {
-  const context = await projects.contextForUri(uri);
+  let context;
+  try {
+    context = await projects.contextForUri(uri);
+  } catch (error) {
+    return [diagnostic({ message: readableError(error), range: rangeAt(text, 0, 0) })];
+  }
   const filePath = pathFromUri(uri);
   const diagnostics = [];
   const document = parseHtml(text);
   const registry = await context.registryFor(filePath);
+  const owner = await context.localComponentOwner(filePath);
   const componentMetadata = await context.componentMetadata(filePath);
   const checkShared = async ({ node, attribute, type }) => {
     try {
@@ -205,13 +296,38 @@ export const diagnosticsFor = async ({ projects, uri, text }) => {
         );
       } else {
         try {
-          if (!registry.get(ref.value))
+          const component = registry.get(ref.value);
+          if (!component)
             diagnostics.push(
               diagnostic({
                 message: `Component not found: "${ref.value}"`,
                 range: attributeValueRange({ text, node, attribute: ref }),
               }),
             );
+          else if (!isAvailableComponent({ component, owner }))
+            diagnostics.push(
+              diagnostic({
+                message: unavailableComponentMessage({ component, owner }),
+                range: attributeValueRange({ text, node, attribute: ref }),
+              }),
+            );
+          else {
+            const metadata = componentMetadata.get(component.ref);
+            if (metadata && !metadata.slots.includes("default") && !isSelfClosingUse({ text, node })) {
+              const range = elementRange({ text, node });
+              if (hasDefaultSlotContent(node))
+                diagnostics.push(
+                  diagnostic({ message: `Component "${component.ref}" does not define a default slot`, range }),
+                );
+              else if (!hasSlotContent(node))
+                diagnostics.push(
+                  diagnostic({
+                    message: `Component "${component.ref}" does not define a default slot. Use <use ref="${component.ref}" />.`,
+                    range,
+                  }),
+                );
+            }
+          }
         } catch (error) {
           diagnostics.push(
             diagnostic({ message: readableError(error), range: attributeValueRange({ text, node, attribute: ref }) }),

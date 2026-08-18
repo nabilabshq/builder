@@ -21,20 +21,19 @@ const project = async (files) => {
 test("hybrid layout resolves local components before shared, projects slots, forwards attributes, and emits page resources", async () => {
   const root = await project({
     "src/pages/index.html":
-      '<!doctype html><html><head><title>Home</title><link use="reset.css"></head><body><use ref="header"></use><use ref="card"><h2 slot="header">Title</h2><p>Body</p><use ref="button" slot="footer" href="/buy" variant="secondary" id="buy" aria-label="Buy">Buy</use></use><script use="base.js"></script></body></html>',
+      '<!doctype html><html><head><title>Home</title><link use="reset.css"></head><body><use ref="@header"></use><use ref="ui/card"><h2 slot="header">Title</h2><p>Body</p><use ref="ui/button" slot="footer" href="/buy" variant="secondary" id="buy" aria-label="Buy">Buy</use></use><script use="base.js"></script></body></html>',
     "src/pages/style.css": "/* page */\n",
     "src/pages/script.js": "// page\n",
-    "src/pages/components/header/index.html": '<header class="local-header">Local</header>',
-    "src/pages/components/header/style.css": "/* local header */\n",
-    "src/shared/components/header/index.html": '<header class="shared-header">Shared</header>',
-    "src/shared/components/header/style.css": "/* shared header */\n",
-    "src/shared/components/card/index.html":
+    "src/pages/@header/index.html": '<header class="local-header">Local</header>',
+    "src/pages/@header/style.css": "/* local header */\n",
+    "src/ui/header/index.html": '<header class="shared-header">Shared</header>',
+    "src/ui/header/style.css": "/* shared header */\n",
+    "src/ui/card/index.html":
       '<article class="card"><header><slot name="header"></slot></header><div><slot></slot></div><footer><slot name="footer"></slot></footer></article>',
-    "src/shared/components/card/style.css": "/* card */\n",
-    "src/shared/components/button/index.html":
-      '<a class="button button--{{variant}}" href="{{href}}" {{...props}}><slot /></a>',
-    "src/shared/components/button/style.css": "/* button */\n",
-    "src/shared/components/button/script.js": "// button\n",
+    "src/ui/card/style.css": "/* card */\n",
+    "src/ui/button/index.html": '<a class="button button--{{variant}}" href="{{href}}" {{...props}}><slot /></a>',
+    "src/ui/button/style.css": "/* button */\n",
+    "src/ui/button/script.js": "// button\n",
     "src/shared/styles/reset.css": "/* shared */\n",
     "src/shared/js/base.js": "// shared js\n",
     "src/shared/assets/logo.txt": "asset",
@@ -66,11 +65,11 @@ test("hybrid layout resolves local components before shared, projects slots, for
 
 test("hybrid inline build emits component and page resources in the same graph order", async () => {
   const root = await project({
-    "src/pages/promo/index.html": '<html><head></head><body><use ref="banner"></use></body></html>',
+    "src/pages/promo/index.html": '<html><head></head><body><use ref="ui/banner"></use></body></html>',
     "src/pages/promo/style.css": "/* page */",
-    "src/shared/components/banner/index.html": "<section>Banner</section>",
-    "src/shared/components/banner/style.css": "/* banner */",
-    "src/shared/components/banner/script.js": "const html = '</script>';",
+    "src/ui/banner/index.html": "<section>Banner</section>",
+    "src/ui/banner/style.css": "/* banner */",
+    "src/ui/banner/script.js": "const html = '</script>';",
   });
   try {
     await build({ cwd: root, mode: "inline", config: { minify: { css: false } } });
@@ -103,6 +102,67 @@ test("baseRoute mounts root and nested pages with colocated assets", async () =>
     assert.match(students, /src="\/partner\/rabota\/assets\/logo.svg"/);
     assert.match(students, /href="\/partner\/rabota\/students">Current page/);
     await readFile(join(root, "dist/partner/rabota/assets/logo.svg"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolves namespaced global components and nearest local @ components", async () => {
+  const root = await project({
+    "src/pages/partners/index.html": '<html><body><use ref="@button"></use></body></html>',
+    "src/pages/partners/special/index.html":
+      '<html><body><use ref="@button"></use><use ref="ui/button"></use><use ref="modules/carousel"></use></body></html>',
+    "src/pages/partners/@button/index.html": '<button class="outer">Outer</button>',
+    "src/pages/partners/special/@button/index.html": '<button class="nearest">Nearest</button>',
+    "src/ui/button/index.html": '<button class="global">Global</button>',
+    "src/modules/carousel/index.html": '<section class="carousel">Carousel</section>',
+  });
+  try {
+    await build({ cwd: root });
+    const parent = await readFile(join(root, "dist/partners/index.html"), "utf8");
+    const nested = await readFile(join(root, "dist/partners/special/index.html"), "utf8");
+    assert.match(parent, /outer/);
+    assert.match(nested, /nearest/);
+    assert.match(nested, /global/);
+    assert.match(nested, /carousel/);
+    assert.doesNotMatch(nested, /outer/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("excludes a configured pages directory from global components", async () => {
+  const root = await project({
+    "src/partner/index.html": '<html><body><use ref="ui/footer" /><use ref="@header"></use></body></html>',
+    "src/partner/blog/index.html": "<html><body>Blog</body></html>",
+    "src/partner/@header/index.html": "<header>Header</header>",
+    "src/ui/footer/index.html": "<footer>Footer</footer>",
+  });
+  try {
+    const result = await build({
+      cwd: root,
+      config: { baseRoute: "partner/", pagesDir: "partner", minify: { css: false } },
+    });
+    assert.equal(result.componentCount, 2);
+    const output = await readFile(join(root, "dist/partner/index.html"), "utf8");
+    assert.match(output, /<footer>Footer<\/footer><header>Header<\/header>/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps nested local components private to their root component", async () => {
+  const root = await project({
+    "src/pages/index.html": '<html><body><use ref="@header"></use><use ref="@steps"></use></body></html>',
+    "src/pages/@header/index.html": '<header><use ref="@header/window"></use></header>',
+    "src/pages/@header/@window.html": "<aside>Menu</aside>",
+    "src/pages/@steps/index.html": '<section><use ref="@header/window"></use></section>',
+  });
+  try {
+    await assert.rejects(
+      () => build({ cwd: root }),
+      /Nested local component "@header\/window" is private to "@header"/,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

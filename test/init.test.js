@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { init } from "../src/init.js";
 
-const requiredDirectories = ["src/pages", "src/shared/components", "src/shared/styles", "src/shared/js"];
+const requiredDirectories = ["src/pages", "src/ui", "src/shared/styles", "src/shared/js"];
 const starterScripts = {
   dev: "nabi dev",
   build: "nabi build",

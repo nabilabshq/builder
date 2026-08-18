@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import { basename, dirname, extname, relative, resolve } from "node:path";
 
 import { NabiError } from "../utils/errors.js";
@@ -38,30 +39,56 @@ export const routeToOutput = (route) => {
   return clean ? `${clean}/index.html` : "index.html";
 };
 
-const isComponentSource = ({ path, rootPath }) => toPosix(relative(rootPath, path)).split("/").includes("components");
+const isComponentSource = ({ path, rootPath }) =>
+  toPosix(relative(rootPath, path))
+    .split("/")
+    .some((segment) => segment.startsWith("@"));
 const relativeToCwd = ({ path, cwd }) => toPosix(relative(cwd, path));
+
+export const localComponentPaths = async ({ rootPath, directory }) => {
+  const paths = [];
+  let current = directory;
+  while (inside(rootPath, current)) {
+    let entries = [];
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    paths.push(
+      ...entries
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith("@"))
+        .map((entry) => resolve(current, entry.name)),
+    );
+    if (current === rootPath) break;
+    current = dirname(current);
+  }
+  return paths.reverse();
+};
 
 export const discoverPages = async ({ rootPath, cwd = process.cwd(), baseRoute = "", ignoredPaths = [] }) => {
   const candidates = (await listFiles(rootPath, [".html"])).filter((path) => {
     if (isComponentSource({ path, rootPath })) return false;
     return !ignoredPaths.some((ignoredPath) => inside(ignoredPath, path));
   });
-  const pages = candidates.map((path) => {
-    const fileName = basename(path);
-    const route = fileToRoute({ filePath: path, rootPath });
-    const publicRoute = mergeRouteSegments(baseRoute, route);
-    const outputPath = routeToOutput(publicRoute);
-    return {
-      path,
-      route,
-      publicRoute,
-      outputPath,
-      outputDir: toPosix(dirname(outputPath)),
-      localComponentsPath: resolve(dirname(path), "components"),
-      stylePath: fileName === "index.html" ? resolve(dirname(path), "style.css") : path.replace(/\.html$/i, ".css"),
-      scriptPath: fileName === "index.html" ? resolve(dirname(path), "script.js") : path.replace(/\.html$/i, ".js"),
-    };
-  });
+  const pages = await Promise.all(
+    candidates.map(async (path) => {
+      const fileName = basename(path);
+      const route = fileToRoute({ filePath: path, rootPath });
+      const publicRoute = mergeRouteSegments(baseRoute, route);
+      const outputPath = routeToOutput(publicRoute);
+      return {
+        path,
+        route,
+        publicRoute,
+        outputPath,
+        outputDir: toPosix(dirname(outputPath)),
+        localComponentPaths: await localComponentPaths({ rootPath, directory: dirname(path) }),
+        stylePath: fileName === "index.html" ? resolve(dirname(path), "style.css") : path.replace(/\.html$/i, ".css"),
+        scriptPath: fileName === "index.html" ? resolve(dirname(path), "script.js") : path.replace(/\.html$/i, ".js"),
+      };
+    }),
+  );
   const routes = new Map();
   for (const page of pages) {
     const existing = routes.get(page.publicRoute);

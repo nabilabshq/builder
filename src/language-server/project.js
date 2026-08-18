@@ -3,8 +3,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import * as parse5 from "parse5";
 
-import { createHybridComponentRegistry } from "../compiler/registry.js";
+import { createGlobalComponentRegistry, createHybridComponentRegistry } from "../compiler/registry.js";
 import { loadConfig } from "../config.js";
+import { localComponentPaths } from "../routing/pages.js";
 import { fileExists, listFiles, readText } from "../utils/files.js";
 import { inside } from "../utils/paths.js";
 
@@ -61,18 +62,27 @@ class ProjectContext {
     this.config = config;
     this.registries = new Map();
     this.sharedFiles = new Map();
+    this.globalComponents = undefined;
   }
 
   async registryFor(filePath) {
-    const localComponentsPath = resolve(dirname(filePath), "components");
-    if (!this.registries.has(localComponentsPath)) {
-      const registry = await createHybridComponentRegistry({
-        localComponentsPath,
-        sharedComponentsPath: this.config.sharedComponentsPath,
+    const localPaths = await localComponentPaths({ rootPath: this.config.pagesPath, directory: dirname(filePath) });
+    const key = localPaths.join("\0");
+    if (!this.registries.has(key)) {
+      const ignoredComponentPaths = [this.config.pagesPath, this.config.sharedPath];
+      this.globalComponents ??= await createGlobalComponentRegistry({
+        sourcePath: this.config.srcPath,
+        ignoredPaths: ignoredComponentPaths,
       });
-      this.registries.set(localComponentsPath, registry);
+      const registry = await createHybridComponentRegistry({
+        localComponentPaths: localPaths,
+        sourcePath: this.config.srcPath,
+        globalComponents: this.globalComponents,
+        ignoredPaths: ignoredComponentPaths,
+      });
+      this.registries.set(key, registry);
     }
-    return this.registries.get(localComponentsPath);
+    return this.registries.get(key);
   }
 
   async componentMetadata(filePath) {
@@ -80,6 +90,13 @@ class ProjectContext {
     return new Map(
       [...registry.components.values()].map((component) => [component.ref, metadataFromComponent(component)]),
     );
+  }
+
+  async localComponentOwner(filePath) {
+    const registry = await this.registryFor(filePath);
+    const component = [...registry.components.values()].find((entry) => entry.path === filePath);
+    if (!component || component.scope !== "local" || component.ref.split("/").length > 1) return;
+    return component.ref;
   }
 
   async sharedPaths(type) {

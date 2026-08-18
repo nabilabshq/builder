@@ -6,8 +6,8 @@ import { fileExists } from "./utils/files.js";
 
 const defaults = {
   srcDir: "src",
-  pagesDir: "src/pages",
-  sharedDir: "src/shared",
+  pagesDir: "pages",
+  sharedDir: "shared",
   outDir: "dist",
   baseRoute: "",
   defaultBuildMode: "split",
@@ -28,6 +28,24 @@ const normaliseBaseRoute = (value) => {
   if (segments.some((segment) => !segment || [".", ".."].includes(segment)))
     throw new NabiError(`Invalid baseRoute: ${value}`);
   return segments.join("/");
+};
+
+const normalisePagesDir = (value) => {
+  if (
+    typeof value !== "string" ||
+    !value ||
+    value !== value.trim() ||
+    /[\\/]/.test(value) ||
+    [".", ".."].includes(value)
+  )
+    throw new NabiError('pagesDir must be a single directory name inside src, for example "pages".');
+  return value;
+};
+
+const normaliseSharedDir = (value) => {
+  if (typeof value !== "string" || !value || value !== value.trim() || /^(?:src)[\\/]/i.test(value))
+    throw new NabiError('sharedDir is relative to src, for example "shared".');
+  return value;
 };
 
 export const loadConfig = async ({ cwd = process.cwd(), config: overrides = {} } = {}) => {
@@ -52,17 +70,21 @@ export const loadConfig = async ({ cwd = process.cwd(), config: overrides = {} }
     throw new NabiError("minify.html, minify.css, and minify.js must be booleans.");
   if (typeof raw.images.optimize !== "boolean") throw new NabiError("images.optimize must be a boolean.");
   const baseRoute = normaliseBaseRoute(raw.baseRoute);
+  const pagesDir = normalisePagesDir(raw.pagesDir);
+  const sharedDir = normaliseSharedDir(raw.sharedDir);
   return {
     ...raw,
     baseRoute,
+    pagesDir,
+    sharedDir,
     cwd: resolve(cwd),
-    pagesPath: resolve(cwd, raw.pagesDir),
-    sharedPath: resolve(cwd, raw.sharedDir),
-    sharedComponentsPath: resolve(cwd, raw.sharedDir, "components"),
-    sharedStylesPath: resolve(cwd, raw.sharedDir, "styles"),
-    sharedJsPath: resolve(cwd, raw.sharedDir, "js"),
-    sharedAssetsPath: resolve(cwd, raw.sharedDir, "assets"),
-    assetsPath: resolve(cwd, raw.sharedDir, "assets"),
+    srcPath: resolve(cwd, raw.srcDir),
+    pagesPath: resolve(cwd, raw.srcDir, pagesDir),
+    sharedPath: resolve(cwd, raw.srcDir, sharedDir),
+    sharedStylesPath: resolve(cwd, raw.srcDir, sharedDir, "styles"),
+    sharedJsPath: resolve(cwd, raw.srcDir, sharedDir, "js"),
+    sharedAssetsPath: resolve(cwd, raw.srcDir, sharedDir, "assets"),
+    assetsPath: resolve(cwd, raw.srcDir, sharedDir, "assets"),
     outPath: resolve(cwd, raw.outDir),
   };
 };

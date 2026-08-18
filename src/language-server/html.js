@@ -34,18 +34,20 @@ export const tagContextAt = (text, offset) => {
   const closing = text.indexOf(">", start);
   if (closing !== -1 && closing < offset) return;
   const source = text.slice(start, offset);
+  const tagSource = text.slice(start, closing === -1 ? offset : closing);
   const tag = /^<\s*([\w:-]+)/.exec(source)?.[1]?.toLowerCase();
   if (!tag) return;
   const active = /([\w:-]+)\s*=\s*(["'])([^"']*)$/.exec(source);
   if (active) {
     const prefixStart = offset - active[3].length;
+    const valueEnd = text.indexOf(active[2], offset);
     return {
       tag,
       start,
-      attributes: attributesFrom(source),
+      attributes: attributesFrom(tagSource),
       attribute: active[1].toLowerCase(),
       prefix: active[3],
-      range: rangeAt(text, prefixStart, offset),
+      range: rangeAt(text, prefixStart, valueEnd === -1 ? offset : valueEnd),
     };
   }
   const partial = /(?:^|\s)([\w:-]*)$/.exec(source);
@@ -53,7 +55,7 @@ export const tagContextAt = (text, offset) => {
   return {
     tag,
     start,
-    attributes: attributesFrom(source),
+    attributes: attributesFrom(tagSource),
     attributeNamePrefix: prefix,
     attributeNameRange: rangeAt(text, offset - prefix.length, offset),
   };

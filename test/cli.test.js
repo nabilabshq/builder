@@ -7,7 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const cliPath = fileURLToPath(new URL("../src/cli.js", import.meta.url));
-const directories = ["src/pages", "src/shared/components", "src/shared/styles", "src/shared/js"];
+const directories = ["src/pages", "src/ui", "src/shared/styles", "src/shared/js"];
 
 const runCli = (cwd, args) =>
   new Promise((resolve, reject) => {

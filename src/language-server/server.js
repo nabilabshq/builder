@@ -7,7 +7,7 @@ import {
 } from "vscode-languageserver/node.js";
 import { TextDocument } from "vscode-languageserver-textdocument";
 
-import { completionsFor, definitionFor, diagnosticsFor } from "./features.js";
+import { completionsFor, definitionFor, diagnosticsFor, documentLinksFor } from "./features.js";
 import { createProjectManager } from "./project.js";
 
 export const startLanguageServer = () => {
@@ -35,6 +35,7 @@ export const startLanguageServer = () => {
         textDocumentSync: TextDocumentSyncKind.Incremental,
         completionProvider: { triggerCharacters: ['"', "'", " ", "/"] },
         definitionProvider: true,
+        documentLinkProvider: { resolveProvider: false },
       },
     };
   });
@@ -42,12 +43,7 @@ export const startLanguageServer = () => {
   connection.onInitialized(async () => {
     try {
       await connection.client.register(DidChangeWatchedFilesNotification.type, {
-        watchers: [
-          { globPattern: "**/nabi.config.js" },
-          { globPattern: "**/shared/components/**/*" },
-          { globPattern: "**/shared/js/**/*" },
-          { globPattern: "**/shared/styles/**/*" },
-        ],
+        watchers: [{ globPattern: "**/nabi.config.js" }, { globPattern: "**/src/**" }],
       });
     } catch (error) {
       console.error(`Nabi language server watcher registration failed: ${error.message}`);
@@ -64,6 +60,12 @@ export const startLanguageServer = () => {
     const document = documents.get(params.textDocument.uri);
     if (!document) return [];
     return definitionFor({ projects, uri: document.uri, text: document.getText(), position: params.position });
+  });
+
+  connection.onDocumentLinks(async (params) => {
+    const document = documents.get(params.textDocument.uri);
+    if (!document) return [];
+    return documentLinksFor({ projects, uri: document.uri, text: document.getText() });
   });
 
   connection.onDidChangeWatchedFiles(async () => {

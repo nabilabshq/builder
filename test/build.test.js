@@ -21,13 +21,13 @@ const project = async (files) => {
 test("split build emits page-owned CSS, JS, assets, and manifest", async () => {
   const root = await project({
     "src/pages/index.html":
-      '<!doctype html><html><head></head><body><use ref="card">Home</use><img src="@assets/logo.bin"></body></html>',
+      '<!doctype html><html><head></head><body><use ref="ui/card">Home</use><img src="@assets/logo.bin"></body></html>',
     "src/pages/style.css": "/* page css */\n",
     "src/pages/script.js": "// page js\n",
     "src/pages/dashboard/index.html": "<html><head></head><body>Dashboard</body></html>",
-    "src/shared/components/card/index.html": "<article><slot /></article>",
-    "src/shared/components/card/style.css": "/* card css */\n",
-    "src/shared/components/card/script.js": "// card js\n",
+    "src/ui/card/index.html": "<article><slot /></article>",
+    "src/ui/card/style.css": "/* card css */\n",
+    "src/ui/card/script.js": "// card js\n",
     "src/shared/assets/logo.bin": "binary-like\u0000content",
   });
   try {
@@ -64,11 +64,11 @@ test("blocks shared asset path traversal", async () => {
 
 test("inline build embeds graph CSS and JavaScript safely", async () => {
   const root = await project({
-    "src/pages/index.html": '<!doctype html><html><head></head><body><use ref="banner"></use></body></html>',
+    "src/pages/index.html": '<!doctype html><html><head></head><body><use ref="ui/banner"></use></body></html>',
     "src/pages/style.css": ".hero::after { content: '</style>'; }\n",
-    "src/shared/components/banner/index.html": "<section>Banner</section>",
-    "src/shared/components/banner/style.css": "/* banner */\n",
-    "src/shared/components/banner/script.js": "const markup = '</script>';\n",
+    "src/ui/banner/index.html": "<section>Banner</section>",
+    "src/ui/banner/style.css": "/* banner */\n",
+    "src/ui/banner/script.js": "const markup = '</script>';\n",
   });
   try {
     await build({ cwd: root, mode: "inline", config: { minify: { css: false } } });

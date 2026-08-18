@@ -45,7 +45,7 @@ test("discovers nested and regular pages deterministically", async () => {
     "src/pages/partner/index.html": "partner",
     "src/pages/partner/rabota/index.html": "rabota",
     "src/pages/partner/rabota/students/index.html": "students",
-    "src/pages/components/card/index.html": "component",
+    "src/pages/@card/index.html": "component",
   });
   try {
     const pages = await discoverPages({ rootPath: join(root, "src/pages"), cwd: root });

@@ -1,7 +1,7 @@
 import { writeBuild } from "./build/output.js";
 import { resolveSharedDependencies, rewriteAssetReferences, rewriteInternalLinks } from "./compiler/dependencies.js";
 import { compilePage } from "./compiler/page.js";
-import { createHybridComponentRegistry } from "./compiler/registry.js";
+import { createGlobalComponentRegistry, createHybridComponentRegistry } from "./compiler/registry.js";
 import { collectHybridResources } from "./compiler/resources.js";
 import { loadConfig } from "./config.js";
 import { discoverPages as discoverPageRoutes } from "./routing/pages.js";
@@ -24,12 +24,19 @@ export const build = async ({ cwd, config: configOverrides, mode, write = true }
   const entries = await discoverPages(config);
   if (!entries.length) throw new NabiError(`No HTML pages found in ${config.pagesDir}`);
   const pages = [];
-  const componentTags = new Set();
+  const ignoredComponentPaths = [config.pagesPath, config.sharedPath];
+  const globalComponents = await createGlobalComponentRegistry({
+    sourcePath: config.srcPath,
+    ignoredPaths: ignoredComponentPaths,
+  });
+  const componentTags = new Set(globalComponents.keys());
   for (const entry of entries) {
     const source = await readText(entry.path);
     const registry = await createHybridComponentRegistry({
-      localComponentsPath: entry.localComponentsPath,
-      sharedComponentsPath: config.sharedComponentsPath,
+      localComponentPaths: entry.localComponentPaths,
+      sourcePath: config.srcPath,
+      globalComponents,
+      ignoredPaths: ignoredComponentPaths,
     });
     for (const tag of registry.components.keys()) componentTags.add(tag);
     const resolvedComponents = [];

@@ -23,8 +23,8 @@ test("resolves page and component shared dependencies without global injection",
     "src/pages/index.html":
       '<html><head><link use="core/normalize.css" media="screen"><link rel="stylesheet" href="./page.css"></head><body><script use="core/utm.js" type="module" defer></script><script use="core/utm.js"></script><script src="./page.js"></script></body></html>',
     "src/pages/pricing/index.html":
-      '<html><head><link use="pricing.css"></head><body><use ref="card"></use></body></html>',
-    "src/shared/components/card/index.html": '<section>Card</section><script use="card.js"></script>',
+      '<html><head><link use="pricing.css"></head><body><use ref="ui/card" /></body></html>',
+    "src/ui/card/index.html": '<section>Card</section><script use="card.js"></script>',
     "src/shared/styles/core/normalize.css": "/* normalize */\nhtml { color: black; }",
     "src/shared/styles/pricing.css": ".price { color: purple; }",
     "src/shared/styles/unused.css": ".unused { color: red; }",
