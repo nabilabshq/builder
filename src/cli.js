@@ -46,7 +46,7 @@ const run = async () => {
     return printInit(await init({ cwd: directories[0] }));
   }
   if (command === "build") {
-    if (hasHelp()) return printCommandHelp("nabi build [--mode split|inline]", "Build the current Nabi project.");
+    if (hasHelp()) return printCommandHelp("nabi build [--mode split|inline|body]", "Build the current Nabi project.");
     return printBuild(await build({ mode: option("--mode") }));
   }
   if (command === "clean") {

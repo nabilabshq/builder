@@ -11,7 +11,7 @@ test("loads optional nabi.config.js with production defaults", async () => {
   try {
     await writeFile(
       join(root, "nabi.config.js"),
-      'export default { outDir: "public", baseRoute: "/partner/rabota/", dev: { port: 4173 }, minify: { html: true }, images: { optimize: true } };\n',
+      'export default { outDir: "public", baseRoute: "/partner/rabota/", defaultBuildMode: "body", dev: { port: 4173 }, minify: { html: true }, images: { optimize: true } };\n',
     );
     const config = await loadConfig({ cwd: root });
     assert.equal(config.outDir, "public");
@@ -21,6 +21,7 @@ test("loads optional nabi.config.js with production defaults", async () => {
     assert.equal(config.pagesPath, join(root, "src/pages"));
     assert.equal(config.sharedDir, "shared");
     assert.equal(config.sharedPath, join(root, "src/shared"));
+    assert.equal(config.defaultBuildMode, "body");
     assert.deepEqual(config.minify, { html: true, css: true, js: false });
     assert.deepEqual(config.images, { optimize: true });
   } finally {

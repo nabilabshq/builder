@@ -22,7 +22,7 @@ const element = (tagName, attrs = [], childNodes = []) => ({
   childNodes,
 });
 
-export const injectGeneratedResources = ({ html, css = [], js = [], inline = false }) => {
+export const injectGeneratedResources = ({ html, css = [], js = [], cssSources = [], jsSources = [], inline = false }) => {
   const document = parse5.parse(html);
   const rawBlocks = [];
   const rawBlock = (value) => {
@@ -36,8 +36,12 @@ export const injectGeneratedResources = ({ html, css = [], js = [], inline = fal
   if (head && css.length) {
     head.childNodes.push(
       ...(inline
-        ? css.map((value) =>
-            element("style", [], [{ nodeName: "#text", value: rawBlock(value.replace(/<\/style/gi, "<\\/style")) }]),
+        ? css.map((value, index) =>
+            element(
+              "style",
+              cssSources[index] ? [{ name: "data-href", value: cssSources[index] }] : [],
+              [{ nodeName: "#text", value: rawBlock(value.replace(/<\/style/gi, "<\\/style")) }],
+            ),
           )
         : css.map((path) =>
             element("link", [
@@ -50,8 +54,12 @@ export const injectGeneratedResources = ({ html, css = [], js = [], inline = fal
   if (body && js.length) {
     body.childNodes.push(
       ...(inline
-        ? js.map((value) =>
-            element("script", [], [{ nodeName: "#text", value: rawBlock(value.replace(/<\/script/gi, "<\\/script")) }]),
+        ? js.map((value, index) =>
+            element(
+              "script",
+              jsSources[index] ? [{ name: "data-src", value: jsSources[index] }] : [],
+              [{ nodeName: "#text", value: rawBlock(value.replace(/<\/script/gi, "<\\/script")) }],
+            ),
           )
         : js.map((path) => element("script", [{ name: "src", value: path }]))),
     );

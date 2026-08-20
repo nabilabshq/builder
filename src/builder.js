@@ -19,8 +19,8 @@ export const discoverPages = async (config) =>
 export const build = async ({ cwd, config: configOverrides, mode, write = true } = {}) => {
   const config = await loadConfig({ cwd, config: configOverrides });
   const buildMode = mode ?? config.defaultBuildMode;
-  if (!["split", "inline"].includes(buildMode))
-    throw new NabiError(`Unknown build mode: ${buildMode}. Use split or inline.`);
+  if (!["split", "inline", "body"].includes(buildMode))
+    throw new NabiError(`Unknown build mode: ${buildMode}. Use split, inline, or body.`);
   const entries = await discoverPages(config);
   if (!entries.length) throw new NabiError(`No HTML pages found in ${config.pagesDir}`);
   const pages = [];

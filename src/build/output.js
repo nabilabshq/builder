@@ -1,6 +1,8 @@
 import { mkdir, readFile, rename } from "node:fs/promises";
 import { join, relative } from "node:path";
 
+import * as parse5 from "parse5";
+
 import { injectGeneratedResources } from "../compiler/dependencies.js";
 import { copyTree, listFiles, remove, writeText } from "../utils/files.js";
 import { minifyCss, minifyHtml, minifyJs } from "./minify.js";
@@ -80,6 +82,90 @@ const readResources = async ({ resources, minify }) => ({
 });
 
 const publicResourcePath = (page, fileName) => `/${[page.publicRoute, fileName].filter(Boolean).join("/")}`;
+const sourcePathFromProject = ({ config, path }) => relative(config.srcPath, path).replaceAll("\\", "/");
+const findElement = (node, tagName) => {
+  if (node.tagName === tagName) return node;
+  for (const child of node.childNodes ?? []) {
+    const found = findElement(child, tagName);
+    if (found) return found;
+  }
+};
+const attribute = (node, name) => node.attrs?.find((item) => item.name === name);
+const extractElements = (node, tagName, predicate = () => true) => {
+  const elements = [];
+  const visit = (current) => {
+    for (const child of current.childNodes ?? []) {
+      if (child.tagName === tagName && predicate(child)) elements.push(child);
+      else visit(child);
+    }
+    current.childNodes = (current.childNodes ?? []).filter((child) => !elements.includes(child));
+  };
+  visit(node);
+  return elements;
+};
+const inlineSharedDependencies = async ({ config, dependencies, html, annotate }) => {
+  const [styles, scripts] = await Promise.all([
+    Promise.all(
+      [...new Set(dependencies.styles)].map(async (path) => [
+        `/${[config.baseRoute, "styles", relative(config.sharedStylesPath, path).replaceAll("\\", "/")].filter(Boolean).join("/")}`,
+        { path: sourcePathFromProject({ config, path }), source: await readFile(path, "utf8") },
+      ]),
+    ),
+    Promise.all(
+      [...new Set(dependencies.scripts)].map(async (path) => [
+        `/${[config.baseRoute, "js", relative(config.sharedJsPath, path).replaceAll("\\", "/")].filter(Boolean).join("/")}`,
+        { path: sourcePathFromProject({ config, path }), source: await readFile(path, "utf8") },
+      ]),
+    ),
+  ]);
+  const styleSources = new Map(styles);
+  const scriptSources = new Map(scripts);
+  const document = parse5.parse(html);
+  const rawBlocks = [];
+  const rawBlock = (value) => {
+    const marker = `__NABI_SHARED_${rawBlocks.length}__`;
+    rawBlocks.push({ marker, value });
+    return marker;
+  };
+  const visit = (node) => {
+    if (node.tagName === "link") {
+      const href = attribute(node, "href");
+      const source = styleSources.get(href?.value);
+      if (source) {
+        node.nodeName = "style";
+        node.tagName = "style";
+        node.attrs = (node.attrs ?? []).filter((item) => !["href", "rel"].includes(item.name));
+        if (annotate) node.attrs.push({ name: "data-href", value: source.path });
+        node.childNodes = [{ nodeName: "#text", value: rawBlock(source.source.replace(/<\/style/gi, "<\\/style")) }];
+      }
+    }
+    if (node.tagName === "script") {
+      const src = attribute(node, "src");
+      const source = scriptSources.get(src?.value);
+      if (source) {
+        node.attrs = (node.attrs ?? []).filter((item) => item.name !== "src");
+        if (annotate) node.attrs.push({ name: "data-src", value: source.path });
+        node.childNodes = [{ nodeName: "#text", value: rawBlock(source.source.replace(/<\/script/gi, "<\\/script")) }];
+      }
+    }
+    for (const child of node.childNodes ?? []) visit(child);
+  };
+  visit(document);
+  return rawBlocks.reduce((output, block) => output.replace(block.marker, block.value), parse5.serialize(document));
+};
+
+const bodyOutput = (html) => {
+  const document = parse5.parse(html);
+  const body = findElement(document, "body");
+  const styles = extractElements(document, "style");
+  const scripts = extractElements(document, "script");
+  const globalStyles = styles.filter((node) => attribute(node, "data-href")?.value.startsWith("shared/styles/"));
+  const componentStyles = styles.filter((node) => !globalStyles.includes(node));
+  return parse5.serialize({
+    nodeName: "#document-fragment",
+    childNodes: [...globalStyles, ...componentStyles, ...(body?.childNodes ?? []), ...scripts],
+  });
+};
 
 const writeSharedDependencies = async ({ config, pages, temporary }) => {
   const styles = [...new Set(pages.flatMap((page) => page.dependencies.styles))];
@@ -102,19 +188,26 @@ const writeSharedDependencies = async ({ config, pages, temporary }) => {
 
 const writeHybridBuild = async ({ config, pages, mode, temporary }) => {
   await copyTree(config.assetsPath, join(temporary, config.baseRoute, "assets"));
-  await writeSharedDependencies({ config, pages, temporary });
+  const isInline = mode === "inline" || mode === "body";
+  const isBody = mode === "body";
+  if (!isInline) await writeSharedDependencies({ config, pages, temporary });
   const manifest = {};
   for (const page of pages) {
     const resources = await readResources({ resources: page.resources, minify: config.minify });
-    const isInline = mode === "inline";
+    const pageHtml = isInline
+      ? await inlineSharedDependencies({ config, dependencies: page.dependencies, html: page.html, annotate: isInline })
+      : page.html;
     const html = injectGeneratedResources({
-      html: page.html,
+      html: pageHtml,
       css: isInline ? resources.css : resources.css.length ? [publicResourcePath(page, "style.css")] : [],
       js: isInline ? resources.js : resources.js.length ? [publicResourcePath(page, "script.js")] : [],
+      cssSources: isInline ? page.resources.css.map((path) => sourcePathFromProject({ config, path })) : [],
+      jsSources: isInline ? page.resources.js.map((path) => sourcePathFromProject({ config, path })) : [],
       inline: isInline,
     });
     const outputPath = page.outputPath;
-    await writeText(join(temporary, outputPath), config.minify.html ? await minifyHtml(html) : html);
+    const output = isBody ? bodyOutput(html) : html;
+    await writeText(join(temporary, outputPath), config.minify.html ? await minifyHtml(output) : output);
     if (!isInline) {
       if (resources.css.length) await writeText(join(temporary, page.outputDir, "style.css"), resources.css.join("\n"));
       if (resources.js.length) await writeText(join(temporary, page.outputDir, "script.js"), resources.js.join("\n"));

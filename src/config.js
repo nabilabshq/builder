@@ -64,7 +64,7 @@ export const loadConfig = async ({ cwd = process.cwd(), config: overrides = {} }
     minify: { ...defaults.minify, ...userConfig.minify, ...overrides.minify },
     images: { ...defaults.images, ...userConfig.images, ...overrides.images },
   };
-  if (!["split", "inline"].includes(raw.defaultBuildMode))
+  if (!["split", "inline", "body"].includes(raw.defaultBuildMode))
     throw new NabiError(`Invalid defaultBuildMode: ${raw.defaultBuildMode}`);
   if (Object.values(raw.minify).some((value) => typeof value !== "boolean"))
     throw new NabiError("minify.html, minify.css, and minify.js must be booleans.");

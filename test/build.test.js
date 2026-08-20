@@ -64,7 +64,7 @@ test("blocks shared asset path traversal", async () => {
 
 test("inline build embeds graph CSS and JavaScript safely", async () => {
   const root = await project({
-    "src/pages/index.html": '<!doctype html><html><head></head><body><use ref="ui/banner"></use></body></html>',
+    "src/pages/index.html": '<!doctype html><html><head></head><body><use ref="ui/banner" /></body></html>',
     "src/pages/style.css": ".hero::after { content: '</style>'; }\n",
     "src/ui/banner/index.html": "<section>Banner</section>",
     "src/ui/banner/style.css": "/* banner */\n",
@@ -73,9 +73,47 @@ test("inline build embeds graph CSS and JavaScript safely", async () => {
   try {
     await build({ cwd: root, mode: "inline", config: { minify: { css: false } } });
     const html = await readFile(join(root, "dist/index.html"), "utf8");
-    assert.match(html, /<style>\/\* banner \*\//);
+    assert.match(html, /<style data-href="ui\/banner\/style.css">\/\* banner \*\//);
+    assert.match(html, /<style data-href="pages\/style.css">\.hero::after/);
+    assert.match(html, /<script data-src="ui\/banner\/script.js">const markup/);
     assert.match(html, /<\\\/style>/);
     assert.match(html, /const markup = '<\\\/script>';/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("body build emits a wrapper-free fragment with annotated inline resources", async () => {
+  const root = await project({
+    "src/pages/index.html":
+      '<!doctype html><html lang="ru"><head><meta charset="UTF-8"><link use="fonts.css"></head><body><link use="normalize.css"><use ref="ui/card">Body content</use><script use="shared.js"></script></body></html>',
+    "src/pages/style.css": "/* page style */\n",
+    "src/pages/script.js": "// page script\n",
+    "src/ui/card/index.html": '<section class="card"><slot/></section>',
+    "src/ui/card/style.css": "/* component style */\n",
+    "src/ui/card/script.js": "// component script\n",
+    "src/shared/styles/fonts.css": "/* fonts */\n",
+    "src/shared/styles/normalize.css": "/* normalize */\n",
+    "src/shared/js/shared.js": "// shared script\n",
+  });
+  try {
+    await build({ cwd: root, mode: "body", config: { minify: { css: false } } });
+    const fragment = await readFile(join(root, "dist/index.html"), "utf8");
+    assert.doesNotMatch(fragment, /<!doctype|<html|<head|<body|<meta/i);
+    assert.match(fragment, /<style data-href="shared\/styles\/fonts.css">\/\* fonts \*\//);
+    assert.match(fragment, /<style data-href="shared\/styles\/normalize.css">\/\* normalize \*\//);
+    assert.match(fragment, /<style data-href="ui\/card\/style.css">\/\* component style \*\//);
+    assert.match(fragment, /<style data-href="pages\/style.css">\/\* page style \*\//);
+    assert.match(fragment, /<section class="card">Body content<\/section>/);
+    assert.match(fragment, /<script data-src="shared\/js\/shared.js">\/\/ shared script\s*<\/script>/);
+    assert.match(fragment, /<script data-src="ui\/card\/script.js">\/\/ component script\s*<\/script>/);
+    assert.match(fragment, /<script data-src="pages\/script.js">\/\/ page script\s*<\/script>/);
+    assert.ok(fragment.indexOf("shared/styles/normalize.css") < fragment.indexOf("ui/card/style.css"));
+    assert.ok(fragment.indexOf("shared/styles/normalize.css") < fragment.indexOf('<section class="card">'));
+    assert.ok(fragment.indexOf("shared/js/shared.js") < fragment.indexOf("ui/card/script.js"));
+    assert.ok(fragment.indexOf("ui/card/script.js") < fragment.indexOf("pages/script.js"));
+    await assert.rejects(() => readFile(join(root, "dist/styles/fonts.css")));
+    await assert.rejects(() => readFile(join(root, "dist/js/shared.js")));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
