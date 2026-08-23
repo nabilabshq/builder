@@ -1,8 +1,9 @@
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { NabiError } from "./utils/errors.js";
 import { fileExists } from "./utils/files.js";
+import { inside } from "./utils/paths.js";
 
 const defaults = {
   srcDir: "src",
@@ -43,8 +44,24 @@ const normalisePagesDir = (value) => {
 };
 
 const normaliseSharedDir = (value) => {
-  if (typeof value !== "string" || !value || value !== value.trim() || /^(?:src)[\\/]/i.test(value))
+  if (
+    !isSafeRelativePath(value) ||
+    /^(?:src)[\\/]/i.test(value) ||
+    value.split(/[\\/]/).some((segment) => [".", ".."].includes(segment))
+  )
     throw new NabiError('sharedDir is relative to src, for example "shared".');
+  return value;
+};
+
+const isSafeRelativePath = (value) =>
+  typeof value === "string" &&
+  Boolean(value) &&
+  value === value.trim() &&
+  !isAbsolute(value) &&
+  !value.split(/[\\/]/).some((segment) => !segment || [".", ".."].includes(segment));
+
+const normaliseProjectDir = ({ value, name, example }) => {
+  if (!isSafeRelativePath(value)) throw new NabiError(`${name} must be a relative directory, for example "${example}".`);
   return value;
 };
 
@@ -72,19 +89,28 @@ export const loadConfig = async ({ cwd = process.cwd(), config: overrides = {} }
   const baseRoute = normaliseBaseRoute(raw.baseRoute);
   const pagesDir = normalisePagesDir(raw.pagesDir);
   const sharedDir = normaliseSharedDir(raw.sharedDir);
+  const srcDir = normaliseProjectDir({ value: raw.srcDir, name: "srcDir", example: "src" });
+  const outDir = normaliseProjectDir({ value: raw.outDir, name: "outDir", example: "dist" });
+  const cwdPath = resolve(cwd);
+  const srcPath = resolve(cwdPath, srcDir);
+  const outPath = resolve(cwdPath, outDir);
+  if (inside(srcPath, outPath) || inside(outPath, srcPath))
+    throw new NabiError("srcDir and outDir must not overlap.");
   return {
     ...raw,
     baseRoute,
     pagesDir,
     sharedDir,
-    cwd: resolve(cwd),
-    srcPath: resolve(cwd, raw.srcDir),
-    pagesPath: resolve(cwd, raw.srcDir, pagesDir),
-    sharedPath: resolve(cwd, raw.srcDir, sharedDir),
-    sharedStylesPath: resolve(cwd, raw.srcDir, sharedDir, "styles"),
-    sharedJsPath: resolve(cwd, raw.srcDir, sharedDir, "js"),
-    sharedAssetsPath: resolve(cwd, raw.srcDir, sharedDir, "assets"),
-    assetsPath: resolve(cwd, raw.srcDir, sharedDir, "assets"),
-    outPath: resolve(cwd, raw.outDir),
+    cwd: cwdPath,
+    srcDir,
+    outDir,
+    srcPath,
+    pagesPath: resolve(srcPath, pagesDir),
+    sharedPath: resolve(srcPath, sharedDir),
+    sharedStylesPath: resolve(srcPath, sharedDir, "styles"),
+    sharedJsPath: resolve(srcPath, sharedDir, "js"),
+    sharedAssetsPath: resolve(srcPath, sharedDir, "assets"),
+    assetsPath: resolve(srcPath, sharedDir, "assets"),
+    outPath,
   };
 };

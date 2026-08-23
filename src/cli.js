@@ -11,6 +11,8 @@ const option = (name) => {
   return index === -1 ? undefined : args[index + 1];
 };
 const hasHelp = () => args.includes("--help") || args.includes("-h");
+const displayDuration = (milliseconds) =>
+  milliseconds < 1000 ? `${Math.round(milliseconds)}ms` : `${(milliseconds / 1000).toFixed(1)}s`;
 
 const printHelp = () => {
   console.log(
@@ -22,10 +24,12 @@ const printCommandHelp = (usage, description) => {
   console.log(`Nabi\n\nUsage: ${usage}\n\n${description}`);
 };
 
-const printBuild = (result) => {
+const printBuild = ({ duration, ...result }) => {
   console.log(`\nNabi build\n\nMode: ${result.mode}\n`);
   for (const page of result.pages) console.log(`✓ ${page.outputPath}`);
-  console.log(`\n${result.pages.length} pages\n${result.componentCount} components\nOutput: ${result.config.outDir}`);
+  console.log(
+    `\n${result.pages.length} pages\n${result.componentCount} components\nOutput: ${result.config.outDir}\n\n✓ built in ${displayDuration(duration)}\n`,
+  );
 };
 
 const printInit = (result) => {
@@ -47,7 +51,10 @@ const run = async () => {
   }
   if (command === "build") {
     if (hasHelp()) return printCommandHelp("nabi build [--mode split|inline|body]", "Build the current Nabi project.");
-    return printBuild(await build({ mode: option("--mode") }));
+    console.log("\nBuilding project...");
+    const startedAt = performance.now();
+    const result = await build({ mode: option("--mode") });
+    return printBuild({ ...result, duration: performance.now() - startedAt });
   }
   if (command === "clean") {
     if (hasHelp())

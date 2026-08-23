@@ -17,18 +17,28 @@ export const discoverPages = async (config) =>
     ignoredPaths: [config.sharedPath],
   });
 
-const loadComponentCssModules = async ({ components, sourcePath }) => {
+const cssModulesFor = ({ path, sourcePath, cache }) => {
+  const existing = cache.get(path);
+  if (existing) return existing;
+  const moduleData = (async () => {
+    const paths = await cssModulePathsFor(path);
+    return { paths, classes: await cssModuleClassNames({ paths, sourcePath }) };
+  })();
+  cache.set(path, moduleData);
+  return moduleData;
+};
+
+const loadComponentCssModules = async ({ components, sourcePath, cache }) => {
   await Promise.all(
-    [...components.values()].map(async (component) => {
-      component.cssModuleClasses = await cssModuleClassNames({
-        paths: await cssModulePathsFor(component.path),
-        sourcePath,
-      });
+    [...components.values()].filter((component) => !component.cssModuleClasses).map(async (component) => {
+      const modules = await cssModulesFor({ path: component.path, sourcePath, cache });
+      component.cssModuleClasses = modules.classes;
+      component.cssModulePaths = modules.paths;
     }),
   );
 };
 
-export const build = async ({ cwd, config: configOverrides, mode, write = true } = {}) => {
+export const build = async ({ cwd, config: configOverrides, mode, write = true, copyAssets = true, atomic = true } = {}) => {
   const config = await loadConfig({ cwd, config: configOverrides });
   const buildMode = mode ?? config.defaultBuildMode;
   if (!["split", "inline", "body"].includes(buildMode))
@@ -36,12 +46,13 @@ export const build = async ({ cwd, config: configOverrides, mode, write = true }
   const entries = await discoverPages(config);
   if (!entries.length) throw new NabiError(`No HTML pages found in ${config.pagesDir}`);
   const pages = [];
+  const cssModuleCache = new Map();
   const ignoredComponentPaths = [config.pagesPath, config.sharedPath];
   const globalComponents = await createGlobalComponentRegistry({
     sourcePath: config.srcPath,
     ignoredPaths: ignoredComponentPaths,
   });
-  await loadComponentCssModules({ components: globalComponents, sourcePath: config.srcPath });
+  await loadComponentCssModules({ components: globalComponents, sourcePath: config.srcPath, cache: cssModuleCache });
   const componentTags = new Set(globalComponents.keys());
   for (const entry of entries) {
     const source = await readText(entry.path);
@@ -51,18 +62,15 @@ export const build = async ({ cwd, config: configOverrides, mode, write = true }
       globalComponents,
       ignoredPaths: ignoredComponentPaths,
     });
-    await loadComponentCssModules({ components: registry.components, sourcePath: config.srcPath });
+    await loadComponentCssModules({ components: registry.components, sourcePath: config.srcPath, cache: cssModuleCache });
     for (const tag of registry.components.keys()) componentTags.add(tag);
-    const cssModuleClasses = await cssModuleClassNames({
-      paths: await cssModulePathsFor(entry.path),
-      sourcePath: config.srcPath,
-    });
+    const pageModules = await cssModulesFor({ path: entry.path, sourcePath: config.srcPath, cache: cssModuleCache });
     const resolvedComponents = [];
     const compiled = await compilePage({
       source,
       registry,
       page: entry.path,
-      cssModuleClasses,
+      cssModuleClasses: pageModules.classes,
       onComponentResolved: (component) => resolvedComponents.push(component),
     });
     const assetHtml = rewriteAssetReferences({ html: compiled, config, page: entry.outputPath });
@@ -74,10 +82,11 @@ export const build = async ({ cwd, config: configOverrides, mode, write = true }
       stylePath: entry.stylePath,
       scriptPath: entry.scriptPath,
       components: resolvedComponents,
+      pageModulePaths: pageModules.paths,
     });
     pages.push({ html, ...entry, sourcePath: entry.path, outputPath: entry.outputPath, resources, dependencies });
   }
-  if (write) await writeBuild({ config, pages, mode: buildMode });
+  if (write) await writeBuild({ config, pages, mode: buildMode, copyAssets, atomic });
   return { config, mode: buildMode, pages, routes: pages, componentCount: componentTags.size };
 };
 

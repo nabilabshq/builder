@@ -1,8 +1,9 @@
-import { basename, dirname, relative } from "node:path";
+import { readdir } from "node:fs/promises";
+import { basename, dirname, join, relative } from "node:path";
 
 import { transform } from "lightningcss";
 
-import { listFiles, readText } from "../utils/files.js";
+import { readText } from "../utils/files.js";
 
 const isModuleFile = (path) => {
   const name = basename(path);
@@ -13,7 +14,16 @@ const filenameFrom = ({ path, sourcePath }) => relative(sourcePath, path).replac
 
 export const cssModulePathsFor = async (path) => {
   const directory = dirname(path);
-  return (await listFiles(directory, [".css"])).filter((candidate) => dirname(candidate) === directory && isModuleFile(candidate));
+  try {
+    const entries = await readdir(directory, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && isModuleFile(entry.name))
+      .map((entry) => join(directory, entry.name))
+      .sort((left, right) => left.localeCompare(right));
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
 };
 
 const transformModule = ({ source, path, sourcePath, minify = false }) =>

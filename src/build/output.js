@@ -11,22 +11,6 @@ import { minifyCss, minifyHtml, minifyJs } from "./minify.js";
 const temporaryPath = (config) => join(config.cwd, ".nabi-build-temp");
 const backupPath = (config) => join(config.cwd, ".nabi-build-backup");
 const retryableRenameError = (error) => ["EACCES", "EBUSY", "ENOTEMPTY", "EPERM"].includes(error.code);
-const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-const renameWithRetry = async (source, destination) => {
-  let lastError;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    try {
-      await rename(source, destination);
-      return;
-    } catch (error) {
-      lastError = error;
-      if (!retryableRenameError(error) || attempt === 9) throw error;
-      await delay(100 * (attempt + 1));
-    }
-  }
-  throw lastError;
-};
 
 const syncOutput = async (config, temporary) => {
   const expectedFiles = new Set((await listFiles(temporary)).map((path) => relative(temporary, path)));
@@ -44,42 +28,64 @@ const replaceOutput = async (config, temporary) => {
   let oldOutputMoved = false;
   try {
     try {
-      await renameWithRetry(config.outPath, backup);
+      await rename(config.outPath, backup);
       oldOutputMoved = true;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
-    await renameWithRetry(temporary, config.outPath);
+    await rename(temporary, config.outPath);
     if (oldOutputMoved) await remove(backup);
   } catch (error) {
+    if (retryableRenameError(error)) {
+      await syncOutput(config, temporary);
+      if (oldOutputMoved) await remove(backup);
+      return;
+    }
     if (oldOutputMoved) {
       try {
-        await renameWithRetry(backup, config.outPath);
+        await rename(backup, config.outPath);
       } catch {
         // The original output could not be restored after a failed replacement.
       }
-    }
-    if (!oldOutputMoved && retryableRenameError(error)) {
-      await syncOutput(config, temporary);
-      return;
     }
     throw error;
   }
 };
 
-const readResources = async ({ config, resources, minify }) => ({
+const cached = async ({ cache, path, read }) => {
+  const existing = cache.get(path);
+  if (existing) return existing;
+  const value = read();
+  cache.set(path, value);
+  return value;
+};
+
+const readResources = async ({ config, resources, minify, cache }) => ({
   css: await Promise.all(
     resources.css.map(async (path) => {
-      const source = await readFile(path, "utf8");
-      if (resources.cssModules.includes(path)) return compileCssModule({ source, path, sourcePath: config.srcPath, minify: minify.css });
-      return minify.css ? minifyCss(source) : source;
+      const isModule = resources.cssModules.includes(path);
+      return cached({
+        cache: cache.css,
+        path,
+        read: async () => {
+          const source = await readFile(path, "utf8");
+          if (isModule) return compileCssModule({ source, path, sourcePath: config.srcPath, minify: minify.css });
+          return minify.css ? minifyCss(source) : source;
+        },
+      });
     }),
   ),
   js: await Promise.all(
-    resources.js.map(async (path) => {
-      const source = await readFile(path, "utf8");
-      return minify.js ? minifyJs(source) : source;
-    }),
+    resources.js.map((path) =>
+      cached({
+        cache: cache.js,
+        path,
+        read: async () => {
+          const source = await readFile(path, "utf8");
+          return minify.js ? minifyJs(source) : source;
+        },
+      }),
+    ),
   ),
 });
 
@@ -188,14 +194,15 @@ const writeSharedDependencies = async ({ config, pages, temporary }) => {
   );
 };
 
-const writeHybridBuild = async ({ config, pages, mode, temporary }) => {
-  await copyTree(config.assetsPath, join(temporary, config.baseRoute, "assets"));
+const writeHybridBuild = async ({ config, pages, mode, temporary, copyAssets }) => {
+  if (copyAssets) await copyTree(config.assetsPath, join(temporary, config.baseRoute, "assets"));
   const isInline = mode === "inline" || mode === "body";
   const isBody = mode === "body";
   if (!isInline) await writeSharedDependencies({ config, pages, temporary });
   const manifest = {};
+  const resourceCache = { css: new Map(), js: new Map() };
   for (const page of pages) {
-    const resources = await readResources({ config, resources: page.resources, minify: config.minify });
+    const resources = await readResources({ config, resources: page.resources, minify: config.minify, cache: resourceCache });
     const pageHtml = isInline
       ? await inlineSharedDependencies({ config, dependencies: page.dependencies, html: page.html, annotate: isInline })
       : page.html;
@@ -222,13 +229,14 @@ const writeHybridBuild = async ({ config, pages, mode, temporary }) => {
   if (mode === "split") await writeText(join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 };
 
-export const writeBuild = async ({ config, pages, mode }) => {
+export const writeBuild = async ({ config, pages, mode, copyAssets = true, atomic = true }) => {
   const temporary = temporaryPath(config);
   await remove(temporary);
   await mkdir(temporary, { recursive: true });
   try {
-    await writeHybridBuild({ config, pages, mode, temporary });
-    await replaceOutput(config, temporary);
+    await writeHybridBuild({ config, pages, mode, temporary, copyAssets });
+    if (atomic) await replaceOutput(config, temporary);
+    else await syncOutput(config, temporary);
   } catch (error) {
     await remove(temporary);
     throw error;

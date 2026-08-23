@@ -40,3 +40,14 @@ test("requires pagesDir to be a single directory inside src", async () => {
   );
   await assert.rejects(() => loadConfig({ config: { sharedDir: "src/shared" } }), /sharedDir is relative to src/);
 });
+
+test("rejects unsafe source, output, and shared directory configuration", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-config-"));
+  try {
+    await assert.rejects(() => loadConfig({ cwd: root, config: { srcDir: "../src" } }), /srcDir must be a relative directory/);
+    await assert.rejects(() => loadConfig({ cwd: root, config: { sharedDir: "../shared" } }), /sharedDir is relative to src/);
+    await assert.rejects(() => loadConfig({ cwd: root, config: { outDir: "src" } }), /srcDir and outDir must not overlap/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

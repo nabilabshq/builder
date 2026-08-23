@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -24,6 +24,11 @@ test("dev server serves compiled pages and injects live reload client", async ()
       const css = await (await fetch(`${dev.url}/style.css`)).text();
       assert.match(css, /dev-page/);
       assert.match(css, /dev comment/);
+      const head = await fetch(dev.url, { method: "HEAD" });
+      assert.equal(head.status, 200);
+      assert.equal(await head.text(), "");
+      assert.equal((await fetch(dev.url, { method: "POST" })).status, 405);
+      assert.equal((await fetch(`${dev.url}/%E0%A4%A`)).status, 400);
     } finally {
       await dev.close();
     }
@@ -58,6 +63,7 @@ test("dev server maps hybrid page directories to routes", async () => {
       assert.match(await (await fetch(`${dev.url}/about/`)).text(), /About/);
       assert.match(await (await fetch(`${dev.url}/promo/style.css`)).text(), /purple/);
       assert.equal(await (await fetch(`${dev.url}/assets/example.txt`)).text(), "asset");
+      await assert.rejects(() => access(join(root, "dist/assets/example.txt")));
     } finally {
       await dev.close();
     }

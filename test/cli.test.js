@@ -41,3 +41,17 @@ test("CLI initializes a project in a target directory and provides command help"
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("CLI reports build duration", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-cli-build-"));
+  try {
+    await mkdir(join(root, "src/pages"), { recursive: true });
+    await writeFile(join(root, "src/pages/index.html"), "<html><body>Home</body></html>");
+    const built = await runCli(root, ["build"]);
+    assert.equal(built.code, 0);
+    assert.match(built.output, /Building project\.\.\./);
+    assert.match(built.output, /built in \d+(?:ms|\.\d+s)/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -8,7 +8,7 @@ import { WebSocketServer } from "ws";
 import { build } from "../builder.js";
 import { loadConfig } from "../config.js";
 import { requestRoute } from "../routing/pages.js";
-import { inside } from "../utils/paths.js";
+import { inside, resolveWithin } from "../utils/paths.js";
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -44,6 +44,8 @@ const liveReloadClient = `<script data-nabi-live-reload>(function () {
 const injectReloadClient = (html) =>
   html.includes("data-nabi-live-reload") ? html : html.replace(/<\/body\s*>/i, `${liveReloadClient}</body>`);
 
+const displayDuration = (milliseconds) => `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`;
+
 const outputPathForRequest = ({ requested, config, pages }) => {
   const route = requestRoute(requested);
   const page = pages.get(route);
@@ -61,28 +63,57 @@ const outputPathForRequest = ({ requested, config, pages }) => {
   }
 };
 
+const assetPathForRequest = ({ requested, config }) => {
+  const route = requestRoute(requested);
+  const prefix = [config.baseRoute, "assets"].filter(Boolean).join("/");
+  if (!route.startsWith(`${prefix}/`)) return;
+  return resolveWithin(config.assetsPath, route.slice(prefix.length + 1), "Asset");
+};
+
 export const startDev = async ({ cwd, config: configOverrides, port } = {}) => {
   const config = await loadConfig({
     cwd,
-    config: { ...configOverrides, dev: { ...configOverrides?.dev, ...(port ? { port } : {}) } },
+    config: { ...configOverrides, dev: { ...configOverrides?.dev, ...(port !== undefined ? { port } : {}) } },
   });
   const devBuildConfig = {
     ...configOverrides,
     minify: { ...configOverrides?.minify, html: false, css: false, js: false },
   };
-  let buildResult = await build({ cwd: config.cwd, config: devBuildConfig, mode: "split" });
+  console.log("Building project...");
+  const buildStartedAt = performance.now();
+  let buildResult = await build({ cwd: config.cwd, config: devBuildConfig, mode: "split", copyAssets: false, atomic: false });
+  console.log(`Built ${buildResult.pages.length} pages in ${displayDuration(performance.now() - buildStartedAt)}.`);
   let pages = new Map(buildResult.routes.map((page) => [page.publicRoute, page]));
   const server = createServer(async (request, response) => {
-    const requested = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
-    const outputPath = outputPathForRequest({ requested, config, pages });
-    if (!outputPath) {
-      response.writeHead(404).end("Not found");
+    if (!["GET", "HEAD"].includes(request.method ?? "")) {
+      response.writeHead(405, { allow: "GET, HEAD" }).end("Method not allowed");
       return;
     }
-    const path = join(config.outPath, outputPath);
-    if (!inside(config.outPath, path)) {
+    let requested;
+    try {
+      requested = decodeURIComponent(new URL(request.url ?? "/", "http://localhost").pathname);
+    } catch {
+      response.writeHead(400).end("Invalid request path");
+      return;
+    }
+    let path;
+    try {
+      path = assetPathForRequest({ requested, config });
+    } catch {
       response.writeHead(403).end("Forbidden");
       return;
+    }
+    if (!path) {
+      const outputPath = outputPathForRequest({ requested, config, pages });
+      if (!outputPath) {
+        response.writeHead(404).end("Not found");
+        return;
+      }
+      path = join(config.outPath, outputPath);
+      if (!inside(config.outPath, path)) {
+        response.writeHead(403).end("Forbidden");
+        return;
+      }
     }
     try {
       const content = await readFile(path);
@@ -90,8 +121,15 @@ export const startDev = async ({ cwd, config: configOverrides, port } = {}) => {
       response.writeHead(200, {
         "content-type": contentTypes[extension] ?? "application/octet-stream",
         "cache-control": "no-cache",
+        "x-content-type-options": "nosniff",
       });
-      response.end(extension === ".html" ? injectReloadClient(content.toString("utf8")) : content);
+      response.end(
+        request.method === "HEAD"
+          ? undefined
+          : extension === ".html"
+            ? injectReloadClient(content.toString("utf8"))
+            : content,
+      );
     } catch {
       response.writeHead(404).end("Not found");
     }
@@ -101,26 +139,44 @@ export const startDev = async ({ cwd, config: configOverrides, port } = {}) => {
     if (new URL(request.url, "http://localhost").pathname !== "/__nabi_live_reload") return socket.destroy();
     sockets.handleUpgrade(request, socket, head, (client) => sockets.emit("connection", client, request));
   });
+  let closed = false;
   let queue = Promise.resolve();
-  const watcher = chokidar.watch(config.srcDir, { cwd: config.cwd, ignoreInitial: true });
+  const watcher = chokidar.watch(config.srcPath, { ignoreInitial: true });
   watcher.on("all", (_, path) => {
-    queue = queue.then(async () => {
-      try {
-        buildResult = await build({ cwd: config.cwd, config: devBuildConfig, mode: "split" });
-        pages = new Map(buildResult.routes.map((page) => [page.publicRoute, page]));
-        const message = path.endsWith(".css") ? "css" : "reload";
-        for (const client of sockets.clients) if (client.readyState === client.OPEN) client.send(message);
-      } catch (error) {
-        console.error(error.message);
-      }
-    });
+    queue = queue
+      .catch(() => {})
+      .then(async () => {
+        if (closed) return;
+        try {
+          buildResult = await build({ cwd: config.cwd, config: devBuildConfig, mode: "split", copyAssets: false, atomic: false });
+          pages = new Map(buildResult.routes.map((page) => [page.publicRoute, page]));
+          const message = path.endsWith(".css") ? "css" : "reload";
+          for (const client of sockets.clients) if (client.readyState === client.OPEN) client.send(message);
+        } catch (error) {
+          console.error(error.message);
+        }
+      });
   });
-  await new Promise((resolve) => server.listen(config.dev.port, resolve));
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(config.dev.port, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
+  } catch (error) {
+    closed = true;
+    await watcher.close();
+    throw error;
+  }
   const address = server.address();
   const activePort = typeof address === "object" && address ? address.port : config.dev.port;
   return {
     url: `http://localhost:${activePort}/${config.baseRoute}`.replace(/\/$/, ""),
     close: async () => {
+      if (closed) return;
+      closed = true;
       await watcher.close();
       for (const client of sockets.clients) client.close();
       server.closeAllConnections();

@@ -22,7 +22,7 @@ export const remove = (path) => rm(path, { recursive: true, force: true, maxRetr
 export const copyTree = async (source, destination) => {
   if (!(await fileExists(source))) return;
   await mkdir(dirname(destination), { recursive: true });
-  await cp(source, destination, { recursive: true, force: true, verbatimSymlinks: true });
+  await cp(source, destination, { recursive: true, force: true, dereference: true });
 };
 
 export const listFiles = async (root, extensions) => {
