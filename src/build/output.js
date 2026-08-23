@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 
 import * as parse5 from "parse5";
 
+import { compileCssModule } from "../compiler/css-modules.js";
 import { injectGeneratedResources } from "../compiler/dependencies.js";
 import { copyTree, listFiles, remove, writeText } from "../utils/files.js";
 import { minifyCss, minifyHtml, minifyJs } from "./minify.js";
@@ -66,10 +67,11 @@ const replaceOutput = async (config, temporary) => {
   }
 };
 
-const readResources = async ({ resources, minify }) => ({
+const readResources = async ({ config, resources, minify }) => ({
   css: await Promise.all(
     resources.css.map(async (path) => {
       const source = await readFile(path, "utf8");
+      if (resources.cssModules.includes(path)) return compileCssModule({ source, path, sourcePath: config.srcPath, minify: minify.css });
       return minify.css ? minifyCss(source) : source;
     }),
   ),
@@ -193,7 +195,7 @@ const writeHybridBuild = async ({ config, pages, mode, temporary }) => {
   if (!isInline) await writeSharedDependencies({ config, pages, temporary });
   const manifest = {};
   for (const page of pages) {
-    const resources = await readResources({ resources: page.resources, minify: config.minify });
+    const resources = await readResources({ config, resources: page.resources, minify: config.minify });
     const pageHtml = isInline
       ? await inlineSharedDependencies({ config, dependencies: page.dependencies, html: page.html, annotate: isInline })
       : page.html;

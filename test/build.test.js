@@ -83,6 +83,29 @@ test("inline build embeds graph CSS and JavaScript safely", async () => {
   }
 });
 
+test("build scopes classes from module.css files with a suffix hash", async () => {
+  const root = await project({
+    "src/pages/index.html":
+      '<html><head></head><body><use ref="ui/card">Page</use><p class="copy theme">Copy</p></body></html>',
+    "src/pages/module.css": ".copy { color: red; }",
+    "src/pages/theme.module.css": ".theme { background: white; }",
+    "src/ui/card/index.html": '<section class="card"><slot /></section>',
+    "src/ui/card/module.css": ".card { color: blue; }",
+  });
+  try {
+    await build({ cwd: root, mode: "split", config: { minify: { css: false } } });
+    const html = await readFile(join(root, "dist/index.html"), "utf8");
+    const css = await readFile(join(root, "dist/style.css"), "utf8");
+    assert.match(html, /<section class="card--[\w-]+">Page<\/section>/);
+    assert.match(html, /<p class="copy--[\w-]+ theme--[\w-]+">Copy<\/p>/);
+    assert.match(css, /\.card--[\w-]+/);
+    assert.match(css, /\.copy--[\w-]+/);
+    assert.match(css, /\.theme--[\w-]+/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("body build emits a wrapper-free fragment with annotated inline resources", async () => {
   const root = await project({
     "src/pages/index.html":

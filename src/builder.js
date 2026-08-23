@@ -1,4 +1,5 @@
 import { writeBuild } from "./build/output.js";
+import { cssModuleClassNames, cssModulePathsFor } from "./compiler/css-modules.js";
 import { resolveSharedDependencies, rewriteAssetReferences, rewriteInternalLinks } from "./compiler/dependencies.js";
 import { compilePage } from "./compiler/page.js";
 import { createGlobalComponentRegistry, createHybridComponentRegistry } from "./compiler/registry.js";
@@ -16,6 +17,17 @@ export const discoverPages = async (config) =>
     ignoredPaths: [config.sharedPath],
   });
 
+const loadComponentCssModules = async ({ components, sourcePath }) => {
+  await Promise.all(
+    [...components.values()].map(async (component) => {
+      component.cssModuleClasses = await cssModuleClassNames({
+        paths: await cssModulePathsFor(component.path),
+        sourcePath,
+      });
+    }),
+  );
+};
+
 export const build = async ({ cwd, config: configOverrides, mode, write = true } = {}) => {
   const config = await loadConfig({ cwd, config: configOverrides });
   const buildMode = mode ?? config.defaultBuildMode;
@@ -29,6 +41,7 @@ export const build = async ({ cwd, config: configOverrides, mode, write = true }
     sourcePath: config.srcPath,
     ignoredPaths: ignoredComponentPaths,
   });
+  await loadComponentCssModules({ components: globalComponents, sourcePath: config.srcPath });
   const componentTags = new Set(globalComponents.keys());
   for (const entry of entries) {
     const source = await readText(entry.path);
@@ -38,12 +51,18 @@ export const build = async ({ cwd, config: configOverrides, mode, write = true }
       globalComponents,
       ignoredPaths: ignoredComponentPaths,
     });
+    await loadComponentCssModules({ components: registry.components, sourcePath: config.srcPath });
     for (const tag of registry.components.keys()) componentTags.add(tag);
+    const cssModuleClasses = await cssModuleClassNames({
+      paths: await cssModulePathsFor(entry.path),
+      sourcePath: config.srcPath,
+    });
     const resolvedComponents = [];
     const compiled = await compilePage({
       source,
       registry,
       page: entry.path,
+      cssModuleClasses,
       onComponentResolved: (component) => resolvedComponents.push(component),
     });
     const assetHtml = rewriteAssetReferences({ html: compiled, config, page: entry.outputPath });

@@ -49,6 +49,14 @@ const findHead = (node) => {
 
 const parseTemplate = (component) => parseFragment(component.template);
 
+const rewriteCssModuleClasses = (nodes, classes = new Map()) => {
+  for (const node of nodes) {
+    const className = node.attrs?.find((attribute) => attribute.name === "class");
+    if (className) className.value = className.value.replace(/[^\s]+/g, (name) => classes.get(name) ?? name);
+    if (node.childNodes) rewriteCssModuleClasses(node.childNodes, classes);
+  }
+};
+
 const escapeText = (value) => String(value);
 
 const propsFrom = (node) =>
@@ -224,6 +232,7 @@ const compileNodes = (nodes, state) => {
     const isSelfClosing = attributeValue(node, compactUseAttribute) !== undefined;
     const projectedSlots = slotChildren(node.childNodes ?? []);
     const template = parseTemplate(component);
+    rewriteCssModuleClasses(template.childNodes, component.cssModuleClasses);
     validateSlots({ component, slots: projectedSlots, template, state, isSelfClosing });
     for (const [name, children] of projectedSlots) projectedSlots.set(name, compileNodes(children, state));
     const props = propsFrom(node);
@@ -247,9 +256,10 @@ const compileNodes = (nodes, state) => {
   return result;
 };
 
-export const compilePage = async ({ source, registry, page = "page.html", onComponentResolved }) => {
+export const compilePage = async ({ source, registry, page = "page.html", onComponentResolved, cssModuleClasses }) => {
   const normalisedSource = normaliseCompactTags(source);
   const document = parseDocument(normalisedSource);
+  rewriteCssModuleClasses(document.childNodes, cssModuleClasses);
   const head = findHead(document);
   const state = {
     registry,

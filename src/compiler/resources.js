@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 
 import { fileExists } from "../utils/files.js";
+import { cssModulePathsFor } from "./css-modules.js";
 
 const unique = (paths) => [...new Set(paths)];
 
@@ -15,8 +16,12 @@ export const collectHybridResources = async ({
 }) => {
   const componentCss = await existing(components.map((component) => component.stylePath));
   const componentJs = await existing(components.map((component) => component.scriptPath));
+  const componentModules = await Promise.all(components.map((component) => cssModulePathsFor(component.path)));
+  const pageModules = await cssModulePathsFor(pagePath);
+  const cssModules = unique([...componentModules.flat(), ...pageModules]);
   return {
-    css: unique([...componentCss, ...(await existing([stylePath]))]),
+    css: unique([...componentCss, ...cssModules, ...(await existing([stylePath]))]),
+    cssModules,
     js: unique([...componentJs, ...(await existing([scriptPath]))]),
   };
 };
