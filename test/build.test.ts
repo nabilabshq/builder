@@ -1,0 +1,232 @@
+import assert from "node:assert/strict";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
+import { test } from "bun:test";
+
+import { build } from "@/builder.ts";
+
+const project = async (files: Record<string, string>) => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-build-"));
+
+  await Promise.all(
+    Object.entries(files).map(async ([path, content]) => {
+      const target = join(root, path);
+
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, content);
+    }),
+  );
+
+  return root;
+};
+
+test("split build emits page-owned CSS, JS, assets, and manifest", async () => {
+  const root = await project({
+    "src/pages/dashboard/index.html": "<html><head></head><body>Dashboard</body></html>",
+    "src/pages/index.html":
+      '<!doctype html><html><head></head><body><use ref="ui/card">Home</use><img src="@assets/logo.bin"></body></html>',
+    "src/pages/script.js": "// page js\n",
+    "src/pages/style.css": "/* page css */\n",
+    "src/shared/assets/logo.bin": "binary-like\u0000content",
+    "src/ui/card/index.html": "<article><slot /></article>",
+    "src/ui/card/script.js": "// card js\n",
+    "src/ui/card/style.css": "/* card css */\n",
+  });
+
+  try {
+    const result = await build({ config: { minify: { css: false } }, cwd: root, mode: "split" });
+
+    assert.equal(result.pages.length, 2);
+
+    const index = await readFile(join(root, "dist/index.html"), "utf8");
+
+    assert.match(index, /href="\/style.css"/);
+    assert.match(index, /src="\/script.js"/);
+    assert.match(index, /src="\/assets\/logo.bin"/);
+    assert.match(index, /<article>Home<\/article>/);
+    assert.equal(await readFile(join(root, "dist/style.css"), "utf8"), "/* card css */\n\n/* page css */\n");
+    assert.equal(await readFile(join(root, "dist/script.js"), "utf8"), "// card js\n\n// page js\n");
+    assert.deepEqual(
+      await readFile(join(root, "src/shared/assets/logo.bin")),
+      await readFile(join(root, "dist/assets/logo.bin")),
+    );
+
+    const manifest = JSON.parse(await readFile(join(root, "dist/manifest.json"), "utf8"));
+
+    assert.deepEqual(manifest["index.html"], { css: ["style.css"], js: ["script.js"] });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("blocks shared asset path traversal", async () => {
+  const root = await project({
+    "src/pages/index.html": '<html><body><img src="@assets/../../secret.png"></body></html>',
+  });
+
+  try {
+    await assert.rejects(() => build({ cwd: root }), /escapes its configured directory/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("uses configured source directories when discovering global components", async () => {
+  const root = await project({
+    "source/pages/card/index.html": "<article>Card</article>",
+    "source/site/index.html": '<html><body><use ref="pages/card" /></body></html>',
+  });
+
+  try {
+    const result = await build({
+      config: { pagesDir: "site", sharedDir: "common", srcDir: "source" },
+      cwd: root,
+    });
+
+    assert.equal(result.componentCount, 1);
+    assert.match(await readFile(join(root, "dist/index.html"), "utf8"), /<article>Card<\/article>/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("inline build embeds graph CSS and JavaScript safely", async () => {
+  const root = await project({
+    "src/pages/index.html": '<!doctype html><html><head></head><body><use ref="ui/banner" /></body></html>',
+    "src/pages/style.css": ".hero::after { content: '</style>'; }\n",
+    "src/ui/banner/index.html": "<section>Banner</section>",
+    "src/ui/banner/script.js": "const markup = '</script>';\n",
+    "src/ui/banner/style.css": "/* banner */\n",
+  });
+
+  try {
+    await build({ config: { minify: { css: false } }, cwd: root, mode: "inline" });
+
+    const html = await readFile(join(root, "dist/index.html"), "utf8");
+
+    assert.match(html, /<style data-href="ui\/banner\/style.css">\/\* banner \*\//);
+    assert.match(html, /<style data-href="pages\/style.css">\.hero::after/);
+    assert.match(html, /<script data-src="ui\/banner\/script.js">const markup/);
+    assert.match(html, /<\\\/style>/);
+    assert.match(html, /const markup = '<\\\/script>';/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("build scopes classes from module.css files with a suffix hash", async () => {
+  const root = await project({
+    "src/pages/index.html":
+      '<html><head></head><body><use ref="ui/card">Page</use><p class="copy theme">Copy</p></body></html>',
+    "src/pages/module.css": ".copy { color: red; }",
+    "src/pages/theme.module.css": ".theme { background: white; }",
+    "src/ui/card/index.html": '<section class="card"><slot /></section>',
+    "src/ui/card/module.css": ".card { color: blue; }",
+  });
+
+  try {
+    await build({ config: { minify: { css: false } }, cwd: root, mode: "split" });
+
+    const html = await readFile(join(root, "dist/index.html"), "utf8");
+    const css = await readFile(join(root, "dist/style.css"), "utf8");
+
+    assert.match(html, /<section class="card--[\w-]+">Page<\/section>/);
+    assert.match(html, /<p class="copy--[\w-]+ theme--[\w-]+">Copy<\/p>/);
+    assert.match(css, /\.card--[\w-]+/);
+    assert.match(css, /\.copy--[\w-]+/);
+    assert.match(css, /\.theme--[\w-]+/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("body build emits a wrapper-free fragment with annotated inline resources", async () => {
+  const root = await project({
+    "src/pages/index.html":
+      '<!doctype html><html lang="ru"><head><meta charset="UTF-8"><link use="fonts.css"></head><body><link use="normalize.css"><use ref="ui/card">Body content</use><script use="shared.js"></script></body></html>',
+    "src/pages/script.js": "// page script\n",
+    "src/pages/style.css": "/* page style */\n",
+    "src/shared/js/shared.js": "// shared script\n",
+    "src/shared/styles/fonts.css": "/* fonts */\n",
+    "src/shared/styles/normalize.css": "/* normalize */\n",
+    "src/ui/card/index.html": '<section class="card"><slot/></section>',
+    "src/ui/card/script.js": "// component script\n",
+    "src/ui/card/style.css": "/* component style */\n",
+  });
+
+  try {
+    await build({ config: { minify: { css: false } }, cwd: root, mode: "body" });
+
+    const fragment = await readFile(join(root, "dist/index.html"), "utf8");
+
+    assert.doesNotMatch(fragment, /<!doctype|<html|<head|<body|<meta/i);
+    assert.match(fragment, /<style data-href="shared\/styles\/fonts.css">\/\* fonts \*\//);
+    assert.match(fragment, /<style data-href="shared\/styles\/normalize.css">\/\* normalize \*\//);
+    assert.match(fragment, /<style data-href="ui\/card\/style.css">\/\* component style \*\//);
+    assert.match(fragment, /<style data-href="pages\/style.css">\/\* page style \*\//);
+    assert.match(fragment, /<section class="card">Body content<\/section>/);
+    assert.match(fragment, /<script data-src="shared\/js\/shared.js">\/\/ shared script\s*<\/script>/);
+    assert.match(fragment, /<script data-src="ui\/card\/script.js">\/\/ component script\s*<\/script>/);
+    assert.match(fragment, /<script data-src="pages\/script.js">\/\/ page script\s*<\/script>/);
+    assert.ok(fragment.indexOf("shared/styles/normalize.css") < fragment.indexOf("ui/card/style.css"));
+    assert.ok(fragment.indexOf("shared/styles/normalize.css") < fragment.indexOf('<section class="card">'));
+    assert.ok(fragment.indexOf("shared/js/shared.js") < fragment.indexOf("ui/card/script.js"));
+    assert.ok(fragment.indexOf("ui/card/script.js") < fragment.indexOf("pages/script.js"));
+    await assert.rejects(() => readFile(join(root, "dist/styles/fonts.css")));
+    await assert.rejects(() => readFile(join(root, "dist/js/shared.js")));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("minifies CSS by default and applies HTML and JavaScript minification only when enabled", async () => {
+  const root = await project({
+    "src/pages/index.html":
+      "<!doctype html><html><head></head><body><!-- page comment --><h1> Hello Nabi </h1></body></html>",
+    "src/pages/script.js": "const greeting = 'Nabi'; console.log(greeting);\n",
+    "src/pages/style.css": "/* style comment */\n.card { color: red; }\n",
+  });
+
+  try {
+    await build({ cwd: root, mode: "split" });
+
+    const defaultHtml = await readFile(join(root, "dist/index.html"), "utf8");
+    const defaultCss = await readFile(join(root, "dist/style.css"), "utf8");
+    const defaultJs = await readFile(join(root, "dist/script.js"), "utf8");
+
+    assert.match(defaultHtml, /<!-- page comment -->/);
+    assert.doesNotMatch(defaultCss, /style comment/);
+    assert.match(defaultCss, /\.card\{color:red\}/);
+    assert.equal(defaultJs, "const greeting = 'Nabi'; console.log(greeting);\n");
+
+    await build({ config: { minify: { html: true, js: true } }, cwd: root, mode: "split" });
+
+    const html = await readFile(join(root, "dist/index.html"), "utf8");
+    const javascript = await readFile(join(root, "dist/script.js"), "utf8");
+
+    assert.doesNotMatch(html, /page comment/);
+    assert.doesNotMatch(html, />\s+</);
+    assert.match(javascript, /console\.log\("Nabi"\)/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("removes stale generated routes on a subsequent build", async () => {
+  const root = await project({
+    "src/pages/index.html": "<html><body>Home</body></html>",
+    "src/pages/retired/index.html": "<html><body>Retired</body></html>",
+  });
+
+  try {
+    await build({ cwd: root });
+    await access(join(root, "dist/retired/index.html"));
+    await rm(join(root, "src/pages/retired"), { force: true, recursive: true });
+    await build({ cwd: root });
+    await assert.rejects(() => access(join(root, "dist/retired/index.html")));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});

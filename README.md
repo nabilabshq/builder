@@ -287,13 +287,11 @@ export default {
 Then `pages/students/index.html` serves at `/partner/rabota/students`. Internal root-relative links are rewritten automatically:
 
 ```html
-<a href="/">Home</a>
-<a href="/students">Students</a>
+<a href="/">Home</a> <a href="/students">Students</a>
 ```
 
 ```html
-<a href="/partner/rabota">Home</a>
-<a href="/partner/rabota/students">Students</a>
+<a href="/partner/rabota">Home</a> <a href="/partner/rabota/students">Students</a>
 ```
 
 Relative links resolve from the current page route. External URLs, hashes, `mailto:`, `tel:`, and CDN URLs are unchanged.

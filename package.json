@@ -8,21 +8,33 @@
   "license": "MIT",
   "packageManager": "bun@1.3.14",
   "bin": {
-    "nabi": "./src/cli.js",
-    "nabi-language-server": "./src/language-server.js"
+    "nabi": "./dist/cli.js",
+    "nabi-language-server": "./dist/language-server.js"
   },
-  "exports": "./src/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "types": "./dist/index.d.ts",
   "scripts": {
-    "test": "node --test",
-    "build": "node ./src/cli.js build",
-    "dev": "node ./src/cli.js dev",
-    "lint": "eslint . --max-warnings 0",
-    "lint:fix": "eslint . --fix",
-    "format": "prettier --write \"{src,test}/**/*.js\" \"examples/**/src/**/*.js\" \"*.js\"",
-    "format:check": "prettier --check \"{src,test}/**/*.js\" \"examples/**/src/**/*.js\" \"*.js\"",
+    "test": "bun test",
+    "----------": "----------",
+    "lint": "eslint . --fix",
+    "lint:check": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "bunx tsc --noEmit",
+    "build": "bun run scripts/build.ts",
     "pack:check": "bun pm pack --dry-run --ignore-scripts",
-    "check": "bun run lint && bun run format:check && bun run test",
-    "prepublishOnly": "bun run check"
+    "-----------": "-----------",
+    "fix": "bun run lint && bun run format",
+    "check": "bun run typecheck && bun run lint:check && bun run format:check && bun run test && bun run build && bun run pack:check",
+    "------------": "------------",
+    "prepack": "bun run build",
+    "prepublishOnly": "bun run check",
+    "prepare": "bun run scripts/prepare.ts"
   },
   "engines": {
     "node": ">=22"
@@ -39,11 +51,22 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
+    "@types/bun": "^1.4.0",
+    "@types/html-minifier-terser": "^7.0.2",
+    "@types/node": "^22.20.1",
+    "@types/ws": "^8.18.1",
+    "dts-bundle-generator": "^9.5.1",
     "eslint": "^9.39.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.5",
     "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-perfectionist": "^5.10.1",
     "eslint-plugin-simple-import-sort": "^12.1.1",
     "globals": "^17.4.0",
-    "prettier": "^3.8.1"
+    "husky": "^9.1.7",
+    "prettier": "^3.8.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.68.0"
   },
   "keywords": [
     "nabi",
@@ -54,7 +77,7 @@
     "build-tool"
   ],
   "files": [
-    "src"
+    "dist"
   ],
   "publishConfig": {
     "access": "public",
