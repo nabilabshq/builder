@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import chokidar from "chokidar";
+
 import { build, clean } from "@/builder";
 import { startDev } from "@/dev";
 import type { BuildMode } from "@/types";
@@ -6,6 +12,8 @@ import { formatError, NabiError } from "@/utils/errors";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "build";
+const devWorkerFlag = "--nabi-dev-worker";
+const isDevWorker = args.includes(devWorkerFlag);
 
 const option = (name: string) => {
   const index = args.indexOf(name);
@@ -64,6 +72,91 @@ const printBuild = ({ duration, ...result }: Awaited<ReturnType<typeof build>> &
   );
 };
 
+const workerExitFor = (worker: ReturnType<typeof spawn>) =>
+  new Promise<number>((resolve) => {
+    worker.once("error", () => resolve(1));
+    worker.once("exit", (exitCode) => resolve(exitCode ?? 1));
+  });
+
+const superviseDev = async () => {
+  const cliPath = fileURLToPath(import.meta.url);
+  const watcher = chokidar.watch(dirname(cliPath), { ignoreInitial: true });
+
+  let closed = false;
+  let restarting = false;
+  let restartTimer: ReturnType<typeof setTimeout> | undefined;
+  let worker: ReturnType<typeof spawn>;
+  let workerExit: Promise<number>;
+
+  const startWorker = () => {
+    worker = spawn(process.execPath, [cliPath, ...args, devWorkerFlag], { stdio: "inherit" });
+    workerExit = workerExitFor(worker);
+  };
+
+  startWorker();
+
+  await new Promise<void>((resolve) => {
+    const close = async (exitCode = 0) => {
+      if (closed) return;
+
+      closed = true;
+
+      if (restartTimer) {
+        clearTimeout(restartTimer);
+      }
+
+      worker.kill();
+      await Promise.all([watcher.close(), workerExit]);
+
+      if (exitCode) {
+        process.exitCode = exitCode;
+      }
+
+      resolve();
+    };
+
+    const restart = async () => {
+      if (closed || restarting) return;
+
+      restarting = true;
+      worker.kill();
+      await workerExit;
+      restarting = false;
+
+      if (closed) return;
+
+      console.log("\nNabi Builder changed. Restarting development server...");
+      startWorker();
+
+      void workerExit.then((exitCode) => {
+        if (!restarting) {
+          void close(exitCode);
+        }
+      });
+    };
+
+    const scheduleRestart = (path: string) => {
+      if (path !== cliPath || closed) return;
+
+      if (restartTimer) {
+        clearTimeout(restartTimer);
+      }
+
+      restartTimer = setTimeout(() => void restart(), 100);
+    };
+
+    watcher.on("add", scheduleRestart);
+    watcher.on("change", scheduleRestart);
+
+    process.once("SIGINT", () => void close());
+    process.once("SIGTERM", () => void close());
+
+    void workerExit.then((exitCode) => {
+      if (!restarting) void close(exitCode);
+    });
+  });
+};
+
 const run = async () => {
   if (command === "help" || (hasHelp() && args.length === 1)) return printHelp();
 
@@ -97,6 +190,8 @@ const run = async () => {
     if (hasHelp()) {
       return printCommandHelp("nabi dev [--port <port>]", "Start the development server for the current Nabi project.");
     }
+
+    if (!isDevWorker) return superviseDev();
 
     const rawPort = option("--port");
 

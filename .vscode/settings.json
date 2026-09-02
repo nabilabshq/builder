@@ -1,0 +1,27 @@
+{
+  "npm.packageManager": "bun",
+
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit",
+    "source.fixAll.stylelint": "explicit"
+  },
+
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": false,
+
+  "eslint.useFlatConfig": true,
+  "eslint.workingDirectories": [
+    {
+      "mode": "auto"
+    }
+  ],
+  "eslint.validate": ["javascript", "typescript"],
+  "prettier.printWidth": 120,
+  "stylelint.enable": true,
+  "stylelint.run": "onType",
+  "stylelint.validate": ["css"],
+
+  "js/ts.preferences.quoteStyle": "double"
+}

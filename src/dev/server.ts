@@ -6,6 +6,7 @@ import { extname } from "node:path";
 import { build } from "@/builder";
 import { loadConfig } from "@/config";
 import type { BuiltPage, NabiConfig, NabiConfigInput } from "@/types";
+import { formatError } from "@/utils/errors";
 import { inside } from "@/utils/paths";
 
 import { createLiveReload, injectReloadClient } from "./live-reload";
@@ -179,11 +180,16 @@ export const startDev = async (options: StartDevOptions = {}) => {
   console.log("Building project...");
 
   const buildStartedAt = performance.now();
-  const initialBuild = await buildDevProject({ buildConfig, config });
+  let initialBuild: Awaited<ReturnType<typeof buildDevProject>> | undefined;
 
-  console.log(`Built ${initialBuild.pages.length} pages in ${displayDuration(performance.now() - buildStartedAt)}.`);
+  try {
+    initialBuild = await buildDevProject({ buildConfig, config });
+    console.log(`Built ${initialBuild.pages.length} pages in ${displayDuration(performance.now() - buildStartedAt)}.`);
+  } catch (error) {
+    console.error(formatError(error));
+  }
 
-  const state: DevServerState = { pages: indexPages(initialBuild.pages) };
+  const state: DevServerState = { pages: indexPages(initialBuild?.pages ?? []) };
   const server = createServer(createRequestHandler({ config, state }));
   const liveReload = createLiveReload(server);
 
@@ -199,7 +205,7 @@ export const startDev = async (options: StartDevOptions = {}) => {
         state.pages = indexPages(result.pages);
         liveReload.broadcast(path.endsWith(".css") ? "css" : "reload");
       } catch (error) {
-        console.error(error instanceof Error ? error.message : String(error));
+        console.error(formatError(error));
       }
     },
     path: config.srcPath,

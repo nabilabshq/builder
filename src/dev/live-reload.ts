@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 
 const liveReloadClient = `<script data-nabi-live-reload>(function () {
-  const socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/__nabi_live_reload');
+  let connected = false;
   const refreshStyles = () => {
     document.querySelectorAll('link[rel="stylesheet"]').forEach(link => {
       const url = new URL(link.href, location.href);
@@ -15,10 +15,20 @@ const liveReloadClient = `<script data-nabi-live-reload>(function () {
       link.after(replacement);
     });
   };
-  socket.addEventListener('message', event => {
-    if (event.data !== 'css') return location.reload();
-    refreshStyles();
-  });
+  const connect = () => {
+    const socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/__nabi_live_reload');
+    socket.addEventListener('open', () => {
+      if (connected) return location.reload();
+      connected = true;
+    });
+    socket.addEventListener('message', event => {
+      if (event.data !== 'css') return location.reload();
+      refreshStyles();
+    });
+    socket.addEventListener('close', () => setTimeout(connect, 250));
+    socket.addEventListener('error', () => socket.close());
+  };
+  connect();
 }());</script>`;
 
 export const injectReloadClient = (html: string) => {

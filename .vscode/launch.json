@@ -1,0 +1,41 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Dev",
+      "command": "bun run dev",
+      "request": "launch",
+      "type": "node-terminal"
+    },
+    {
+      "name": "Build",
+      "command": "bun run build",
+      "request": "launch",
+      "type": "node-terminal"
+    },
+    {
+      "name": "Pack",
+      "command": "bun pm pack",
+      "request": "launch",
+      "type": "node-terminal"
+    },
+    {
+      "name": "Tests",
+      "command": "bun run test",
+      "request": "launch",
+      "type": "node-terminal"
+    },
+    {
+      "name": "Fix",
+      "command": "bun run fix",
+      "request": "launch",
+      "type": "node-terminal"
+    },
+    {
+      "name": "Check",
+      "command": "bun run check",
+      "request": "launch",
+      "type": "node-terminal"
+    }
+  ]
+}

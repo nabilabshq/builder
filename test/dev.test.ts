@@ -64,6 +64,20 @@ const waitForSocketMessage = (socket: WebSocket, expected: string) =>
     socket.on("message", onMessage);
   });
 
+const waitForResponse = async (request: () => Promise<Response>) => {
+  const timeout = performance.now() + 5_000;
+
+  while (performance.now() < timeout) {
+    const response = await request();
+
+    if (response.ok) return response;
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  throw new Error("Timed out waiting for the dev server to rebuild.");
+};
+
 test("dev server serves compiled pages and injects live reload client", async () => {
   const root = await mkdtemp(join(tmpdir(), "nabi-dev-"));
 
@@ -88,6 +102,7 @@ test("dev server serves compiled pages and injects live reload client", async ()
       assert.equal(response.status, 200);
       assert.match(html, /Dev page/);
       assert.match(html, /data-nabi-live-reload/);
+      assert.match(html, /socket\.addEventListener\('close', \(\) => setTimeout\(connect, 250\)\)/);
 
       const css = await (await fetch(`${dev.url}/style.css`)).text();
 
@@ -141,6 +156,36 @@ test("dev server maps hybrid page directories to routes", async () => {
       assert.match(await (await fetch(`${dev.url}/promo/style.css`)).text(), /purple/);
       assert.equal(await (await fetch(`${dev.url}/assets/example.txt`)).text(), "asset");
       await assert.rejects(() => access(join(root, "dist/assets/example.txt")));
+    } finally {
+      await dev.close();
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("dev server stays available after an initial build error and rebuilds when it is fixed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-dev-recovery-"));
+
+  try {
+    const page = join(root, "src/pages/about/index.html");
+    const duplicate = join(root, "src/pages/about.html");
+
+    await mkdir(dirname(page), { recursive: true });
+    await writeFile(page, "<html><body>About</body></html>");
+    await writeFile(duplicate, "<html><body>Duplicate</body></html>");
+
+    const dev = await startDev({ cwd: root, port: await findAvailablePort() });
+
+    try {
+      assert.equal((await fetch(`${dev.url}/about`)).status, 404);
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await rm(duplicate);
+
+      const response = await waitForResponse(() => fetch(`${dev.url}/about`));
+
+      assert.match(await response.text(), /About/);
     } finally {
       await dev.close();
     }
