@@ -1,7 +1,10 @@
+import { extname } from "node:path";
+
 import type { Diagnostic, Range } from "vscode-languageserver/node.js";
 import { DiagnosticSeverity } from "vscode-languageserver/node.js";
 
 import { resolveSharedDependency } from "@/compiler/dependencies";
+import { inside } from "@/utils/paths";
 
 import type { HtmlAttribute, HtmlElement } from "../html";
 import { attributeValueRange, elementRange, isHtmlElement, parseHtml, rangeAt, visitElements } from "../html";
@@ -29,6 +32,19 @@ const diagnostic = ({ message, range }: { message: string; range: Range }): Diag
 });
 
 const readableError = (error: unknown) => (error instanceof Error ? error.message.split("\n")[0] : String(error));
+const routingErrorFor = async ({ context, filePath }: { context: ProjectContext; filePath: string }) => {
+  if (!inside(context.config.pagesPath, filePath)) return;
+
+  try {
+    await context.checkRoutes();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const relativePath = filePath.slice(context.config.cwd.length + 1).replaceAll("\\", "/");
+
+    if (message.includes(filePath) || message.includes(relativePath)) return message;
+  }
+};
+
 const hasDefaultSlotContent = (node: HtmlElement) =>
   (node.childNodes ?? []).some((child) => {
     const slot = child.attrs?.find((attribute) => attribute.name === "slot");
@@ -58,6 +74,19 @@ export const diagnosticsFor = async ({ projects, text, uri }: DiagnosticsFor) =>
 
   const filePath = pathFromUri(uri);
   const diagnostics: Diagnostic[] = [];
+  const routingError = await routingErrorFor({ context, filePath });
+
+  if (routingError) {
+    diagnostics.push(
+      diagnostic({
+        message: routingError,
+        range: rangeAt(text, 0, text.length),
+      }),
+    );
+  }
+
+  if (extname(filePath) === ".json") return diagnostics;
+
   const document = parseHtml(text);
   const registry = await context.registryFor(filePath);
   const owner = await context.localComponentOwner(filePath);

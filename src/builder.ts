@@ -5,7 +5,7 @@ import { compilePage } from "@/compiler/page";
 import { ComponentRegistry, createGlobalComponentRegistry, createHybridComponentRegistry } from "@/compiler/registry";
 import { collectHybridResources } from "@/compiler/resources";
 import { loadConfig } from "@/config";
-import { discoverPages as discoverPageRoutes } from "@/routing";
+import { discoverPages as discoverPageRoutes, interpolateRouteData } from "@/routing";
 import type { BuildMode, BuiltPage, Component, NabiConfig, NabiConfigInput, PageEntry } from "@/types";
 import { NabiError } from "@/utils/errors";
 import { readText, remove } from "@/utils/files";
@@ -81,7 +81,11 @@ const loadComponentCssModules = async ({ cache, components, sourcePath }: LoadCs
 };
 
 const buildPage = async ({ config, cssModuleCache, entry, registry }: BuildPageOptions): Promise<BuiltPage> => {
-  const source = await readText(entry.path);
+  const source = interpolateRouteData({
+    routeContext: entry.routeContext,
+    routeData: entry.routeData,
+    source: await readText(entry.path),
+  });
 
   const pageModules = await cssModulesFor({
     cache: cssModuleCache,
@@ -133,8 +137,10 @@ export const discoverPages = async (config: NabiConfig) =>
   discoverPageRoutes({
     baseRoute: config.baseRoute,
     cwd: config.cwd,
+    dataPath: config.dataPath,
     ignoredPaths: [config.sharedPath],
     rootPath: config.pagesPath,
+    routeFileName: config.routeFileName,
   });
 
 export const build = async (props: BuildOptions = {}) => {

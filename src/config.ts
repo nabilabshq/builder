@@ -20,12 +20,14 @@ type NormaliseProjectDirOptions = {
 const defaults: Required<NabiConfigInput> = {
   assets: { baseUrl: "", mode: "copy" },
   baseRoute: "",
+  dataDir: "data",
   defaultBuildMode: "split",
   dev: { port: 2111 },
   images: { optimize: false },
   minify: { css: true, html: false, js: false },
   outDir: "dist",
   pagesDir: "pages",
+  routeFileName: "_route",
   sharedDir: "shared",
   srcDir: "src",
 };
@@ -77,6 +79,14 @@ const normaliseSharedDir = (value: unknown) => {
 const normaliseProjectDir = ({ example, name, value }: NormaliseProjectDirOptions) => {
   if (!isSafeRelativePath(value)) {
     throw new NabiError(`${name} must be a relative directory, for example "${example}".`);
+  }
+
+  return value;
+};
+
+const normaliseRouteFileName = (value: unknown) => {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new NabiError('routeFileName must be a filename without an extension, for example "_route".');
   }
 
   return value;
@@ -136,6 +146,8 @@ export const loadConfig = async (props: LoadConfigOptions = {}): Promise<NabiCon
 
   const baseRoute = normaliseBaseRoute(raw.baseRoute);
   const pagesDir = normalisePagesDir(raw.pagesDir);
+  const routeFileName = normaliseRouteFileName(raw.routeFileName);
+  const dataDir = normaliseProjectDir({ example: "data", name: "dataDir", value: raw.dataDir });
   const sharedDir = normaliseSharedDir(raw.sharedDir);
   const srcDir = normaliseProjectDir({ example: "src", name: "srcDir", value: raw.srcDir });
   const outDir = normaliseProjectDir({ example: "dist", name: "outDir", value: raw.outDir });
@@ -153,6 +165,8 @@ export const loadConfig = async (props: LoadConfigOptions = {}): Promise<NabiCon
     assetsPath: resolve(srcPath, sharedDir, "assets"),
     baseRoute,
     cwd: cwdPath,
+    dataDir,
+    dataPath: resolve(srcPath, dataDir),
     dev: { port },
     images: { optimize },
     jsPath: resolve(srcPath, sharedDir, "js"),
@@ -161,6 +175,7 @@ export const loadConfig = async (props: LoadConfigOptions = {}): Promise<NabiCon
     outPath,
     pagesDir,
     pagesPath: resolve(srcPath, pagesDir),
+    routeFileName,
     sharedDir,
     sharedPath: resolve(srcPath, sharedDir),
     srcDir,

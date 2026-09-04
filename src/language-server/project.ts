@@ -3,7 +3,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { ComponentRegistry, createGlobalComponentRegistry, createHybridComponentRegistry } from "@/compiler/registry";
 import { loadConfig } from "@/config";
-import { localComponentPaths } from "@/routing";
+import { discoverPages, localComponentPaths } from "@/routing";
+import { routeDataFor } from "@/routing/dynamic/data";
+import { dynamicSegmentsFor } from "@/routing/dynamic/segments";
+import type { ParsedRouteRecord } from "@/routing/dynamic/types";
 import type { Component, NabiConfig, SharedDependencyType } from "@/types";
 import { fileExists, listFiles, readText } from "@/utils/files";
 import type { HtmlNode } from "@/utils/html";
@@ -11,6 +14,7 @@ import { HTML_NAMESPACE, parseFragment } from "@/utils/html";
 import { inside } from "@/utils/paths";
 
 export type DependencyType = SharedDependencyType;
+export type RouteDataFile = { preview: string; value: string };
 export type ComponentMetadata = {
   component: Component;
   filePath: string;
@@ -22,6 +26,9 @@ export type ComponentMetadata = {
 
 type SharedFile = { path: string; preview: string; value: string };
 type FindProjectRootOptions = { filePath: string; workspaceRoots: string[] };
+
+type WorkspaceFolder = string | { uri: string };
+type CreateProjectManager = { workspaceFolders?: WorkspaceFolder[] };
 
 const VARIABLE = /{{([\w:-]+)}}/g;
 const IGNORED_VARIABLES = new Set(["children", "slot"]);
@@ -106,6 +113,7 @@ export class ProjectContext {
   readonly registries = new Map<string, ComponentRegistry>();
   readonly sharedFiles = new Map<DependencyType, SharedFile[]>();
   globalComponents?: Map<string, Component>;
+  routeDiscovery?: Promise<void>;
 
   constructor({ config, root }: { config: NabiConfig; root: string }) {
     this.root = root;
@@ -157,9 +165,78 @@ export class ProjectContext {
     const registry = await this.registryFor(filePath);
     const component = [...registry.components.values()].find((entry) => entry.path === filePath);
 
-    if (!component || component.scope !== "local" || component.ref.split("/").length > 1) return;
+    if (!component || component.scope !== "local" || component.ref.split("/").length > 1) {
+      return;
+    }
 
     return component.ref;
+  }
+
+  private parentRouteSegments(filePath: string) {
+    const pagePath = resolve(dirname(filePath), "index.html");
+    const { dynamicSegments } = dynamicSegmentsFor({
+      path: pagePath,
+      rootPath: this.config.pagesPath,
+      routeFileName: this.config.routeFileName,
+    });
+
+    const currentIndex = dynamicSegments.findIndex((segment) => {
+      return segment.routeConfigPath === filePath;
+    });
+
+    return currentIndex < 1 ? [] : dynamicSegments.slice(0, currentIndex);
+  }
+
+  parentRouteParameters(filePath: string) {
+    const segments = this.parentRouteSegments(filePath);
+
+    return segments.map((segment) => segment.name);
+  }
+
+  async parentRouteRecords(filePath: string): Promise<Record<string, ParsedRouteRecord[]>> {
+    const segments = this.parentRouteSegments(filePath);
+    const configCache = new Map<string, Promise<unknown>>();
+    const dataCache = new Map();
+
+    const records = await Promise.all(
+      segments.map(async (segment) => {
+        const values = await routeDataFor({
+          configCache,
+          dataCache,
+          dataPath: this.config.dataPath,
+          parentNames: segment.parentNames,
+          routeConfigPath: segment.routeConfigPath,
+          segment: segment.name,
+        });
+
+        return [segment.name, values] as const;
+      }),
+    );
+
+    return Object.fromEntries(records);
+  }
+
+  async routeDataPaths(): Promise<RouteDataFile[]> {
+    const paths = await listFiles(this.config.dataPath, [".json"]);
+
+    return Promise.all(
+      paths.map(async (path) => ({
+        preview: await readText(path),
+        value: toPosix(relative(this.config.dataPath, path)),
+      })),
+    );
+  }
+
+  async checkRoutes() {
+    this.routeDiscovery ??= discoverPages({
+      baseRoute: this.config.baseRoute,
+      cwd: this.config.cwd,
+      dataPath: this.config.dataPath,
+      rootPath: this.config.pagesPath,
+      routeFileName: this.config.routeFileName,
+    }).then(() => undefined);
+
+    return this.routeDiscovery;
   }
 
   async sharedPaths(type: DependencyType) {
@@ -185,9 +262,7 @@ export class ProjectContext {
   }
 }
 
-type WorkspaceFolder = string | { uri: string };
-
-export const createProjectManager = ({ workspaceFolders = [] }: { workspaceFolders?: WorkspaceFolder[] } = {}) => {
+export const createProjectManager = ({ workspaceFolders = [] }: CreateProjectManager = {}) => {
   const workspaceRoots = workspaceFolders.map((folder) =>
     pathFromUri(typeof folder === "string" ? folder : folder.uri),
   );
@@ -201,7 +276,10 @@ export const createProjectManager = ({ workspaceFolders = [] }: { workspaceFolde
 
     if (existing) return existing;
 
-    const context = new ProjectContext({ config: await loadConfig({ cwd: root }), root });
+    const context = new ProjectContext({
+      config: await loadConfig({ cwd: root }),
+      root,
+    });
 
     contexts.set(root, context);
 

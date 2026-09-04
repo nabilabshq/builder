@@ -164,28 +164,54 @@ test("dev server maps hybrid page directories to routes", async () => {
   }
 });
 
-test("dev server stays available after an initial build error and rebuilds when it is fixed", async () => {
-  const root = await mkdtemp(join(tmpdir(), "nabi-dev-recovery-"));
+test("dev server serves generated dynamic routes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-dynamic-dev-"));
 
   try {
-    const page = join(root, "src/pages/about/index.html");
-    const duplicate = join(root, "src/pages/about.html");
+    const page = join(root, "src/pages/rabota/[city]/index.html");
+    const routeData = join(root, "src/pages/rabota/[city]/_route.json");
 
     await mkdir(dirname(page), { recursive: true });
-    await writeFile(page, "<html><body>About</body></html>");
-    await writeFile(duplicate, "<html><body>Duplicate</body></html>");
+    await mkdir(join(root, "src/data"), { recursive: true });
+    await writeFile(join(root, "src/data/cities.json"), JSON.stringify({ msk: { name: "Москва" } }));
+    await writeFile(page, "<html><body>{{:city.name}}</body></html>");
+    await writeFile(routeData, JSON.stringify({ "@data": "cities.json" }));
 
     const dev = await startDev({ cwd: root, port: await findAvailablePort() });
 
     try {
-      assert.equal((await fetch(`${dev.url}/about`)).status, 404);
+      assert.match(await (await fetch(`${dev.url}/rabota/msk`)).text(), /Москва/);
+      assert.equal((await fetch(`${dev.url}/rabota/[city]`)).status, 404);
+    } finally {
+      await dev.close();
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("dev server stays available after an initial build error and rebuilds when it is fixed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-dev-recovery-"));
+
+  try {
+    const page = join(root, "src/pages/[city]/index.html");
+    const routeData = join(root, "src/pages/[city]/_route.json");
+
+    await mkdir(dirname(page), { recursive: true });
+    await writeFile(page, "<html><body>City</body></html>");
+    await writeFile(routeData, JSON.stringify(["msk", "msk"]));
+
+    const dev = await startDev({ cwd: root, port: await findAvailablePort() });
+
+    try {
+      assert.equal((await fetch(`${dev.url}/msk`)).status, 404);
 
       await new Promise((resolve) => setTimeout(resolve, 100));
-      await rm(duplicate);
+      await writeFile(routeData, JSON.stringify(["msk"]));
 
-      const response = await waitForResponse(() => fetch(`${dev.url}/about`));
+      const response = await waitForResponse(() => fetch(`${dev.url}/msk`));
 
-      assert.match(await response.text(), /About/);
+      assert.match(await response.text(), /City/);
     } finally {
       await dev.close();
     }

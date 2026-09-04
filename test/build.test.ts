@@ -230,3 +230,85 @@ test("removes stale generated routes on a subsequent build", async () => {
     await rm(root, { force: true, recursive: true });
   }
 });
+
+test("builds dynamic routes and interpolates their route data", async () => {
+  const root = await project({
+    "src/data/cities.json": JSON.stringify({
+      msk: { from16: true, income: "до 250 000 ₽", name: "Москва" },
+      spb: { from16: false, income: "до 230 000 ₽", name: "Санкт-Петербург" },
+    }),
+    "src/pages/partner/rabota/[city]/_route.json": JSON.stringify({ "@data": "cities.json" }),
+    "src/pages/partner/rabota/[city]/index.html":
+      "<html><body><h1>{{:city.name}}</h1><p>{{:city}}</p><p>{{:city.income}}</p><p>{{:unknown}}</p></body></html>",
+    "src/pages/partner/rabota/[city]/students.html": "<html><body>{{:city.name}} {{:city.from16}}</body></html>",
+    "src/pages/partner/rabota/[city]/style.css": ".city { color: blue; }",
+  });
+
+  try {
+    const result = await build({ config: { minify: { css: false } }, cwd: root });
+
+    assert.equal(result.pages.length, 4);
+    assert.match(await readFile(join(root, "dist/partner/rabota/msk/index.html"), "utf8"), /Москва/);
+    assert.match(await readFile(join(root, "dist/partner/rabota/msk/index.html"), "utf8"), /<p>msk<\/p>/);
+    assert.match(await readFile(join(root, "dist/partner/rabota/msk/index.html"), "utf8"), /{{:unknown}}/);
+    assert.match(
+      await readFile(join(root, "dist/partner/rabota/spb/students/index.html"), "utf8"),
+      /Санкт-Петербург false/,
+    );
+    assert.equal(await readFile(join(root, "dist/partner/rabota/msk/style.css"), "utf8"), ".city { color: blue; }");
+    await assert.rejects(() => readFile(join(root, "dist/partner/rabota/[city]/index.html")));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("builds conditional dynamic pages without exposing when to templates", async () => {
+  const root = await project({
+    "src/pages/partner/[folder]/_route.json": JSON.stringify(["perf", "rabota"]),
+    "src/pages/partner/[folder]/[city]/_route.json": JSON.stringify({ "": {}, msk: {} }),
+    "src/pages/partner/[folder]/[city]/[page]/_route.json": JSON.stringify({
+      cpa: { "@when": { city: "", folder: "rabota" } },
+    }),
+    "src/pages/partner/[folder]/[city]/[page]/index.html":
+      "<html><body>{{:folder}}|{{:city}}|{{:page}}|{{:when}}</body></html>",
+  });
+
+  try {
+    const result = await build({ cwd: root });
+    const source = await readFile(join(root, "dist/partner/rabota/cpa/index.html"), "utf8");
+
+    assert.equal(result.pages.length, 1);
+    assert.match(source, /rabota\|\|cpa\|{{:when}}/);
+    await assert.rejects(() => readFile(join(root, "dist/partner/perf/cpa/index.html")));
+    await assert.rejects(() => readFile(join(root, "dist/partner/rabota/msk/cpa/index.html")));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("interpolates nested local route properties in component attributes", async () => {
+  const root = await project({
+    "src/pages/[page]/_route.json": JSON.stringify({
+      "": {
+        seo: {
+          description: "Работа курьером на один день",
+          title: "Приложение для работы курьером",
+        },
+        title: "Работа курьером",
+      },
+    }),
+    "src/pages/[page]/index.html":
+      '<html><body><use ref="ui/meta" description="{{:page.seo.description}}" /></body></html>',
+    "src/ui/meta/index.html": '<meta name="description" content="{{description}}">',
+  });
+
+  try {
+    await build({ cwd: root });
+
+    const source = await readFile(join(root, "dist/index.html"), "utf8");
+
+    assert.match(source, /content="Работа курьером на один день"/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});

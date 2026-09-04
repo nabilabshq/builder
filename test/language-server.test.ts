@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 
 import { test } from "bun:test";
 import type { CompletionItem, TextEdit } from "vscode-languageserver/node.js";
+import { InsertTextFormat } from "vscode-languageserver/node.js";
 
 import { completionsFor } from "@/language-server/features/completions.ts";
 import { definitionFor } from "@/language-server/features/definitions.ts";
@@ -436,6 +437,363 @@ test("language server replaces complete refs and resolves nested local component
       start: { character: 10, line: 0 },
     });
     assert.equal(links[0].target, uriFromPath(join(root, "src/ui/button/index.html")));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("language server completes dynamic route metadata", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-language-server-route-data-"));
+
+  try {
+    const routeDataPath = join(root, "src/pages/[city]/_route.json");
+    const cityDataPath = join(root, "src/data/global/cities.json");
+    const incomeDataPath = join(root, "src/data/income.json");
+    const text = '{\n  "@\n}';
+
+    await Promise.all([
+      mkdir(dirname(routeDataPath), { recursive: true }),
+      mkdir(dirname(cityDataPath), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(cityDataPath, '{\n  "msk": { "name": "Москва" }\n}'),
+      writeFile(incomeDataPath, "{}"),
+      writeFile(routeDataPath, text),
+    ]);
+
+    const items = await completionsFor({
+      position: positionAt(text, '"@', 2),
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(items), ["@data", "@when"]);
+    assert.equal(textEditOf(itemFor(items, "@data")).newText, '"@data": ["$1"]');
+    assert.equal(textEditOf(itemFor(items, "@when")).newText, '"@when": {\n\t$0\n}');
+    assert.equal(itemFor(items, "@when").preselect, true);
+    assert.equal(itemFor(items, "@when").sortText, "0_@when");
+
+    const blankText = "{\n  \n}";
+    const blankItems = await completionsFor({
+      position: { character: 2, line: 1 },
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: blankText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(blankItems), ["@data", "@when"]);
+
+    const arrayText = '{\n  "items": [\n    "value",\n    \n  ]\n}';
+    const arrayItems = await completionsFor({
+      position: { character: 4, line: 3 },
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: arrayText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(arrayItems), []);
+
+    const dataText = '{\n  "@data": [""\n}';
+    const dataItems = await completionsFor({
+      position: positionAt(dataText, '""', 1),
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: dataText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(dataItems), ["global/cities.json", "income.json"]);
+
+    const nextDataText = '{\n  "@data": ["income.json", ""\n}';
+    const nextDataItems = await completionsFor({
+      position: positionAt(nextDataText, '""', 1),
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: nextDataText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(nextDataItems), ["global/cities.json", "income.json"]);
+
+    const dataAfterCommaText = '{\n  "@data": ["income.json", \n}';
+    const dataAfterCommaItems = await completionsFor({
+      position: positionAt(dataAfterCommaText, "\n}", 0),
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: dataAfterCommaText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(dataAfterCommaItems), ["global/cities.json", "income.json"]);
+    assert.equal(textEditOf(itemFor(dataAfterCommaItems, "global/cities.json")).newText, '"global/cities.json"');
+    assert.equal(textEditOf(itemFor(dataItems, "global/cities.json")).newText, "global/cities.json");
+    assert.deepEqual(itemFor(dataItems, "global/cities.json").documentation, {
+      kind: "markdown",
+      value: 'JSON file relative to dataDir.\n\n```json\n{\n  "msk": { "name": "Москва" }\n}\n```',
+    });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("language server completes metadata in configured route files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-language-server-route-file-"));
+
+  try {
+    const routeDataPath = join(root, "src/pages/[city]/route.json");
+    const text = '{\n  "cpa": {\n    "@\n  }\n}';
+
+    await mkdir(dirname(routeDataPath), { recursive: true });
+    await Promise.all([
+      writeFile(join(root, "nabi.config.js"), 'export default { routeFileName: "route" };'),
+      writeFile(routeDataPath, text),
+    ]);
+
+    const items = await completionsFor({
+      position: positionAt(text, '"@', 2),
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(items), ["@data", "@when"]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("language server completes parent parameters in dynamic route conditions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-language-server-route-conditions-"));
+
+  try {
+    const routeDataPath = join(root, "src/pages/[folder]/[city]/[page]/_route.json");
+    const text = '{\n  "page": {\n    "@when": {\n      "": ""\n    }\n  }\n}';
+
+    await mkdir(dirname(routeDataPath), { recursive: true });
+    await writeFile(routeDataPath, text);
+
+    const items = await completionsFor({
+      position: positionAt(text, '""', 1),
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(items), ["folder", "city"]);
+    assert.equal(itemFor(items, "folder").insertText, 'folder": "$1');
+    assert.equal(itemFor(items, "folder").insertTextFormat, InsertTextFormat.Snippet);
+
+    const closedQuoteItems = await completionsFor({
+      position: positionAt(text, '""', 2),
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(closedQuoteItems), ["folder", "city"]);
+    assert.equal(itemFor(closedQuoteItems, "folder").filterText, '""');
+
+    const keyOnlyText = '{\n  "page": {\n    "@when": {\n      ""\n    }\n  }\n}';
+    const keyOnlyItems = await completionsFor({
+      position: positionAt(keyOnlyText, '""', 1),
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: keyOnlyText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.equal(itemFor(keyOnlyItems, "folder").insertTextFormat, InsertTextFormat.Snippet);
+    assert.equal(itemFor(keyOnlyItems, "folder").insertText, 'folder": "$1');
+
+    const namedKeyText = '{\n  "page": {\n    "@when": {\n      "folder"\n    }\n  }\n}';
+    const namedKeyItems = await completionsFor({
+      position: positionAt(namedKeyText, '"folder"', 8),
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: namedKeyText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(namedKeyItems), ["folder"]);
+
+    const blankText = '{\n  "page": {\n    "@when": {\n      \n    }\n  }\n}';
+    const blankItems = await completionsFor({
+      position: { character: 6, line: 3 },
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: blankText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(blankItems), ["folder", "city"]);
+    assert.equal(itemFor(blankItems, "folder").insertText, '"folder": "$1"$0');
+    assert.equal(itemFor(blankItems, "folder").sortText, "0_folder");
+
+    const inlineBlankText = '{"page":{"@when": {  }}}';
+    const inlineBlankItems = await completionsFor({
+      position: positionAt(inlineBlankText, "}}"),
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: inlineBlankText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(inlineBlankItems), ["folder", "city"]);
+
+    const afterConditionText = '{\n  "page": {\n    "@when": {\n      "city": "adler",\n      \n    }\n  }\n}';
+    const afterConditionItems = await completionsFor({
+      position: { character: 6, line: 4 },
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: afterConditionText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(afterConditionItems), ["folder"]);
+
+    const nestedText = `{
+  "cpa": {
+    "seo": {
+      "description": {
+        "after": "Description",
+        "before": "Title"
+      }
+    },
+    "@when": {
+
+    }
+  },
+  "students": {
+    "@when": {
+      "folder": "rabota"
+    }
+  }
+}`;
+    const nestedItems = await completionsFor({
+      position: { character: 6, line: 9 },
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: nestedText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(nestedItems), ["folder", "city"]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("language server completes available parent route values in conditions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-language-server-route-values-"));
+
+  try {
+    const routeDataPath = join(root, "src/pages/[folder]/[city]/[page]/_route.json");
+    const files = {
+      [join(root, "src/pages/[folder]/_route.json")]: JSON.stringify(["rabota"]),
+      [join(root, "src/pages/[folder]/[city]/_route.json")]: JSON.stringify({
+        "": { "@when": { folder: "rabota" } },
+        msk: { "@when": { folder: ["perf", "rabota"] } },
+      }),
+      [routeDataPath]: "{}",
+    };
+
+    await Promise.all(
+      Object.entries(files).map(async ([path, source]) => {
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, source);
+      }),
+    );
+
+    const projects = createProjectManager({ workspaceFolders: [uriFromPath(root)] });
+    const folderText = '{\n  "page": {\n    "@when": {\n      "folder": ""\n    }\n  }\n}';
+    const folderItems = await completionsFor({
+      position: positionAt(folderText, '""', 1),
+      projects,
+      text: folderText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(folderItems), ["rabota"]);
+    assert.equal(textEditOf(folderItems[0]!).newText, "rabota");
+
+    const nextConditionText = '{\n  "page": {\n    "@when": {\n      "folder": "rabota",\n      ""\n    }\n  }\n}';
+    const nextConditionItems = await completionsFor({
+      position: positionAt(nextConditionText, '""', 1),
+      projects,
+      text: nextConditionText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(nextConditionItems), ["city"]);
+
+    const cityText = '{\n  "page": {\n    "@when": {\n      "folder": "rabota",\n      "city": ""\n    }\n  }\n}';
+    const cityItems = await completionsFor({
+      position: positionAt(cityText, '"city": ""', 9),
+      projects,
+      text: cityText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(cityItems), ['""', "msk"]);
+    assert.equal(textEditOf(cityItems[0]!).newText, "");
+
+    const cityArrayText =
+      '{\n  "page": {\n    "@when": {\n      "folder": "rabota",\n      "city": ["msk", ""\n    }\n  }\n}';
+    const cityArrayItems = await completionsFor({
+      position: positionAt(cityArrayText, '""', 1),
+      projects,
+      text: cityArrayText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(cityArrayItems), ['""']);
+    assert.equal(textEditOf(cityArrayItems[0]!).newText, "");
+
+    const cityArrayAfterCommaText =
+      '{\n  "page": {\n    "@when": {\n      "folder": "rabota",\n      "city": ["msk", \n    }\n  }\n}';
+    const cityArrayAfterCommaItems = await completionsFor({
+      position: positionAt(cityArrayAfterCommaText, "\n    }", 0),
+      projects,
+      text: cityArrayAfterCommaText,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(labels(cityArrayAfterCommaItems), ['""']);
+    assert.equal(textEditOf(cityArrayAfterCommaItems[0]!).newText, '""');
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("language server reports dynamic route collisions on their page template", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-language-server-route-collision-"));
+
+  try {
+    const pagePath = join(root, "src/pages/[folder]/[city]/[page]/index.html");
+    const files = {
+      [join(root, "src/pages/[folder]/_route.json")]: JSON.stringify(["perf"]),
+      [join(root, "src/pages/[folder]/[city]/_route.json")]: JSON.stringify(["", "students"]),
+      [join(root, "src/pages/[folder]/[city]/[page]/_route.json")]: JSON.stringify(["students", ""]),
+      [pagePath]: "<main>Page</main>",
+    };
+
+    await Promise.all(
+      Object.entries(files).map(async ([path, content]) => {
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, content);
+      }),
+    );
+
+    const diagnostics = await diagnosticsFor({
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: files[pagePath],
+      uri: uriFromPath(pagePath),
+    });
+
+    assert.deepEqual(
+      diagnostics.map((item) => item.message),
+      [
+        'Route collision: "/perf/students"\n\n' +
+          "The following entries generate the same route:\n\n" +
+          "- src/pages/[folder]/[city]/[page]/index.html\n" +
+          '  Dynamic context: folder=perf, city="", page=students\n\n' +
+          "- src/pages/[folder]/[city]/[page]/index.html\n" +
+          '  Dynamic context: folder=perf, city=students, page=""\n\n' +
+          'Give each record a unique route slug or use "@when" to make the contexts exclusive.',
+      ],
+    );
   } finally {
     await rm(root, { force: true, recursive: true });
   }

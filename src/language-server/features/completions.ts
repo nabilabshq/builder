@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import type { CompletionItem, Position, Range } from "vscode-languageserver/node.js";
 import { CompletionItemKind, InsertTextFormat } from "vscode-languageserver/node.js";
 
@@ -5,6 +7,7 @@ import type { TagCursor } from "../html";
 import { directParentUse, offsetAt, rangeAt, tagContextAt } from "../html";
 import type { ComponentMetadata, DependencyType, ProjectContext, ProjectManager } from "../project";
 import { pathFromUri } from "../project";
+import { isRouteDataPathCompletion, isRouteValueCompletion, routeDataCompletionsFor } from "./route-data.ts";
 import { isAvailableComponent, nestedLocalComponent, sharedElements } from "./shared";
 
 type CompletionContext = {
@@ -171,12 +174,30 @@ const completionForShared = async ({ context, prefix, type }: CompletionForShare
 };
 
 export const completionsFor = async ({ position, projects, text, uri }: CompletionFor) => {
+  const context = await projects.contextForUri(uri);
+  const filePath = pathFromUri(uri);
+
+  if (basename(filePath) === `${context.config.routeFileName}.json`) {
+    const completionContext = { position, text };
+
+    const [dataPaths, parentParameters, parentRecords] = await Promise.all([
+      isRouteDataPathCompletion(completionContext) ? context.routeDataPaths() : [],
+      context.parentRouteParameters(filePath),
+      isRouteValueCompletion(completionContext) ? context.parentRouteRecords(filePath).catch(() => ({})) : {},
+    ]);
+
+    return routeDataCompletionsFor({
+      dataPaths,
+      parentParameters,
+      parentRecords,
+      position,
+      text,
+    });
+  }
+
   const cursor = tagContextAt(text, offsetAt(text, position));
 
   if (!cursor) return [];
-
-  const context = await projects.contextForUri(uri);
-  const filePath = pathFromUri(uri);
 
   if (cursor.tag === "use" && cursor.attribute === "ref") {
     return completionForComponent({

@@ -8,12 +8,14 @@ export type ImagesConfig = { optimize: boolean };
 export type NabiConfigInput = {
   assets?: Partial<AssetsConfig>;
   baseRoute?: string;
+  dataDir?: string;
   defaultBuildMode?: BuildMode;
   dev?: Partial<DevConfig>;
   images?: Partial<ImagesConfig>;
   minify?: Partial<MinifyConfig>;
   outDir?: string;
   pagesDir?: string;
+  routeFileName?: string;
   sharedDir?: string;
   srcDir?: string;
 };
@@ -22,6 +24,7 @@ export type NabiConfig = Omit<Required<NabiConfigInput>, "dev" | "assets" | "min
   assets: AssetsConfig;
   assetsPath: string;
   cwd: string;
+  dataPath: string;
   dev: DevConfig;
   images: ImagesConfig;
   jsPath: string;
@@ -50,6 +53,7 @@ export type Component = {
 };
 
 export type PageResources = { css: string[]; cssModules: string[]; js: string[] };
+export type RouteData = Record<string, unknown>;
 export type SharedDependencyType = "script" | "stylesheet";
 export type SharedDependencies = { scripts: string[]; styles: string[] };
 
@@ -60,6 +64,8 @@ export type PageEntry = {
   path: string;
   publicRoute: string;
   route: string;
+  routeContext?: Record<string, string>;
+  routeData?: Record<string, RouteData | string>;
   scriptPath: string;
   stylePath: string;
 };

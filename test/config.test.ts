@@ -57,6 +57,23 @@ test("allows sharedDir paths relative to src", async () => {
   assert.equal(config.sharedPath, join(config.srcPath, "src/shared"));
 });
 
+test("uses and validates the JSON data directory", async () => {
+  const config = await loadConfig({ config: { dataDir: "content/data" } });
+
+  assert.equal(config.dataDir, "content/data");
+  await assert.rejects(() => loadConfig({ config: { dataDir: "../data" } }), /dataDir must be a relative directory/);
+});
+
+test("uses and validates the dynamic route file name", async () => {
+  const config = await loadConfig({ config: { routeFileName: "routes" } });
+
+  assert.equal(config.routeFileName, "routes");
+  await assert.rejects(
+    () => loadConfig({ config: { routeFileName: "routes.json" } }),
+    /routeFileName must be a filename without an extension/,
+  );
+});
+
 test("requires dev.port to be an integer between 1 and 65535", async () => {
   for (const port of [NaN, Infinity, -1, 3.14, 65536]) {
     await assert.rejects(

@@ -49,7 +49,7 @@ export const startLanguageServer = () => {
 
     return {
       capabilities: {
-        completionProvider: { triggerCharacters: ['"', "'", " ", "/"] },
+        completionProvider: { triggerCharacters: ['"', "'", " ", "/", "@"] },
         definitionProvider: true,
         documentLinkProvider: { resolveProvider: false },
         textDocumentSync: TextDocumentSyncKind.Incremental,
