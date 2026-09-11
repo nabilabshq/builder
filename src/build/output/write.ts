@@ -4,8 +4,8 @@ import { join, relative } from "node:path";
 import { minifyCss, minifyHtml, minifyJs } from "@/build/minify";
 import type { AssetCache } from "@/build/types";
 import { injectGeneratedResources } from "@/compiler/dependencies";
-import type { BuildMode, BuiltPage, NabiConfig } from "@/types";
-import { copyTree, writeText } from "@/utils/files";
+import type { BuildMode, BuiltPage, NabiConfig, SharedDependencyType } from "@/types";
+import { copyTree, fileExists, writeText } from "@/utils/files";
 
 import { bodyOutput, inlineSharedDependencies } from "./html";
 import { publicResourcePath, readResources, sourcePathFromProject } from "./resources";
@@ -22,11 +22,13 @@ type WriteSharedDependenciesProps = {
   config: NabiConfig;
   pages: BuiltPage[];
   temporary: string;
+  types?: SharedDependencyType[];
 };
 
 type BuildManifest = Record<string, { css: string[]; js: string[] }>;
 
 type WritePageProps = {
+  bodyDirectoryRoutes: Set<string>;
   config: NabiConfig;
   isBody: boolean;
   isInline: boolean;
@@ -42,6 +44,18 @@ type WriteHybridBuildProps = {
   mode: BuildMode;
   pages: BuiltPage[];
   temporary: string;
+};
+
+type BodyDirectoryRoutesForProps = {
+  config: NabiConfig;
+  pages: BuiltPage[];
+  temporary: string;
+};
+
+type BodyPageOutputPathProps = {
+  directoryRoutes: Set<string>;
+  page: BuiltPage;
+  scripts: string[];
 };
 
 type WriteDevPageProps = {
@@ -60,9 +74,14 @@ const writeSharedFiles = async ({ directory, paths, root, temporary, transform }
   );
 };
 
-const writeSharedDependencies = async ({ config, pages, temporary }: WriteSharedDependenciesProps) => {
-  const styles = [...new Set(pages.flatMap((page) => page.dependencies.styles))];
-  const scripts = [...new Set(pages.flatMap((page) => page.dependencies.scripts))];
+const writeSharedDependencies = async ({ config, pages, temporary, types }: WriteSharedDependenciesProps) => {
+  const sharedTypes = types ?? ["script", "stylesheet"];
+  const styles = sharedTypes.includes("stylesheet")
+    ? [...new Set(pages.flatMap((page) => page.dependencies.styles))]
+    : [];
+  const scripts = sharedTypes.includes("script")
+    ? [...new Set(pages.flatMap((page) => page.dependencies.scripts))]
+    : [];
 
   await Promise.all([
     writeSharedFiles({
@@ -85,7 +104,39 @@ const writeSharedDependencies = async ({ config, pages, temporary }: WriteShared
 const outputResourcePath = (directory: string, fileName: string) =>
   [directory, fileName].filter((part) => part !== ".").join("/");
 
-const writePage = async ({ config, isBody, isInline, manifest, page, resourceCache, temporary }: WritePageProps) => {
+const bodyDirectoryRoutesFor = async (props: BodyDirectoryRoutesForProps) => {
+  const { config, pages, temporary } = props;
+  const routes = new Set<string>();
+  const baseRoutePath = join(temporary, config.baseRoute);
+
+  for (const page of pages) {
+    const segments = page.publicRoute.split("/").filter(Boolean);
+
+    for (let index = 1; index < segments.length; index += 1) {
+      routes.add(segments.slice(0, index).join("/"));
+    }
+  }
+
+  if (config.baseRoute && (await fileExists(baseRoutePath))) {
+    routes.add(config.baseRoute);
+  }
+
+  return routes;
+};
+
+const bodyPageOutputPath = (props: BodyPageOutputPathProps) => {
+  const { directoryRoutes, page, scripts } = props;
+
+  if (scripts.length || !page.publicRoute || directoryRoutes.has(page.publicRoute)) {
+    return page.outputPath;
+  }
+
+  return `${page.publicRoute}.html`;
+};
+
+const writePage = async (props: WritePageProps) => {
+  const { bodyDirectoryRoutes, config, isBody, isInline, manifest, page, resourceCache, temporary } = props;
+  const inlineStyles = isBody || isInline;
   const resources = await readResources({
     cache: resourceCache,
     config,
@@ -93,29 +144,39 @@ const writePage = async ({ config, isBody, isInline, manifest, page, resourceCac
     resources: page.resources,
   });
 
-  const pageHtml = isInline
+  const pageHtml = inlineStyles
     ? await inlineSharedDependencies({
         annotate: true,
         config,
         dependencies: page.dependencies,
         html: page.html,
+        types: isBody ? ["stylesheet"] : undefined,
       })
     : page.html;
 
   const html = injectGeneratedResources({
-    css: isInline ? resources.css : resources.css.length ? [publicResourcePath(page, "style.css")] : [],
-    cssSources: isInline ? page.resources.css.map((path) => sourcePathFromProject({ config, path })) : [],
+    css: inlineStyles ? resources.css : resources.css.length ? [publicResourcePath(page, "style.css")] : [],
+    cssSources: inlineStyles ? page.resources.css.map((path) => sourcePathFromProject({ config, path })) : [],
     html: pageHtml,
-    inline: isInline,
-    js: isInline ? resources.js : resources.js.length ? [publicResourcePath(page, "script.js")] : [],
+    inline: inlineStyles,
+    js: isInline ? resources.js : resources.js.length && !isBody ? [publicResourcePath(page, "script.js")] : [],
     jsSources: isInline ? page.resources.js.map((path) => sourcePathFromProject({ config, path })) : [],
   });
 
   const output = isBody ? bodyOutput({ config, html }) : html;
+  const outputPath = isBody
+    ? bodyPageOutputPath({ directoryRoutes: bodyDirectoryRoutes, page, scripts: resources.js })
+    : page.outputPath;
 
-  await writeText(join(temporary, page.outputPath), config.minify.html ? await minifyHtml(output) : output);
+  await writeText(join(temporary, outputPath), config.minify.html ? await minifyHtml(output) : output);
 
-  if (isInline) return;
+  if (inlineStyles) {
+    if (isBody && resources.js.length) {
+      await writeText(join(temporary, page.outputDir, "script.js"), resources.js.join("\n"));
+    }
+
+    return;
+  }
 
   if (resources.css.length) {
     await writeText(join(temporary, page.outputDir, "style.css"), resources.css.join("\n"));
@@ -134,16 +195,24 @@ const writePage = async ({ config, isBody, isInline, manifest, page, resourceCac
 export const writeHybridBuild = async ({ config, copyAssets, mode, pages, temporary }: WriteHybridBuildProps) => {
   if (copyAssets) await copyTree(config.assetsPath, join(temporary, config.baseRoute, "assets"));
 
-  const isInline = mode === "inline" || mode === "body";
+  const isInline = mode === "inline";
   const isBody = mode === "body";
 
-  if (!isInline) await writeSharedDependencies({ config, pages, temporary });
+  if (mode === "split") {
+    await writeSharedDependencies({ config, pages, temporary });
+  }
+
+  if (isBody) {
+    await writeSharedDependencies({ config, pages, temporary, types: ["script"] });
+  }
 
   const manifest: BuildManifest = {};
+  const bodyDirectoryRoutes = isBody ? await bodyDirectoryRoutesFor({ config, pages, temporary }) : new Set<string>();
   const resourceCache: AssetCache = { css: new Map(), js: new Map() };
 
   for (const page of pages) {
     await writePage({
+      bodyDirectoryRoutes,
       config,
       isBody,
       isInline,
@@ -164,9 +233,11 @@ export const writeDevPage = async ({ config, page }: WriteDevPageProps) => {
     config,
     pages: [page],
     temporary: config.outPath,
+    types: ["script", "stylesheet"],
   });
 
   await writePage({
+    bodyDirectoryRoutes: new Set(),
     config,
     isBody: false,
     isInline: false,

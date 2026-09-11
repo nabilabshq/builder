@@ -180,10 +180,10 @@ test("build scopes classes from module.css files with a suffix hash", async () =
   }
 });
 
-test("body build emits a wrapper-free fragment with annotated inline resources", async () => {
+test("body build emits a wrapper-free fragment with inline styles and JSON data scripts", async () => {
   const root = await project({
     "src/pages/index.html":
-      '<!doctype html><html lang="ru"><head><meta charset="UTF-8"><link use="fonts.css"></head><body><link use="normalize.css"><use ref="ui/card">Body content</use><script use="shared.js"></script></body></html>',
+      '<!doctype html><html lang="ru"><head><meta charset="UTF-8"><link use="fonts.css"></head><body><link use="normalize.css"><use ref="ui/card">Body content</use><script use="shared.js"></script><script>window.page = true;</script><script type="application/json">{"page":true}</script></body></html>',
     "src/pages/script.js": "// page script\n",
     "src/pages/style.css": "/* page style */\n",
     "src/shared/js/shared.js": "// shared script\n",
@@ -205,15 +205,85 @@ test("body build emits a wrapper-free fragment with annotated inline resources",
     assert.match(fragment, /<style data-href="ui\/card\/style.css">\/\* component style \*\//);
     assert.match(fragment, /<style data-href="pages\/style.css">\/\* page style \*\//);
     assert.match(fragment, /<section class="card">Body content<\/section>/);
-    assert.match(fragment, /<script data-src="shared\/js\/shared.js">\/\/ shared script\s*<\/script>/);
-    assert.match(fragment, /<script data-src="ui\/card\/script.js">\/\/ component script\s*<\/script>/);
-    assert.match(fragment, /<script data-src="pages\/script.js">\/\/ page script\s*<\/script>/);
+    assert.match(fragment, /<script type="application\/json">{"page":true}<\/script>/);
+    assert.equal(fragment.match(/<script\b/g)?.length, 1);
+    assert.doesNotMatch(fragment, /shared script|component script|page script|window\.page/);
     assert.ok(fragment.indexOf("shared/styles/normalize.css") < fragment.indexOf("ui/card/style.css"));
     assert.ok(fragment.indexOf("shared/styles/normalize.css") < fragment.indexOf('<section class="card">'));
-    assert.ok(fragment.indexOf("shared/js/shared.js") < fragment.indexOf("ui/card/script.js"));
-    assert.ok(fragment.indexOf("ui/card/script.js") < fragment.indexOf("pages/script.js"));
     await assert.rejects(() => readFile(join(root, "dist/styles/fonts.css")));
-    await assert.rejects(() => readFile(join(root, "dist/js/shared.js")));
+    assert.equal(await readFile(join(root, "dist/js/shared.js"), "utf8"), "// shared script\n");
+    assert.equal(await readFile(join(root, "dist/script.js"), "utf8"), "// component script\n\n// page script\n");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("body build flattens pages without scripts", async () => {
+  const root = await project({
+    "src/pages/with-script/index.html": "<html><body>With script</body></html>",
+    "src/pages/with-script/script.js": "window.loaded = true;\n",
+    "src/pages/without-script/index.html": "<html><body>Without script</body></html>",
+  });
+
+  try {
+    await build({ cwd: root, mode: "body" });
+
+    assert.match(await readFile(join(root, "dist/without-script.html"), "utf8"), /Without script/);
+    await assert.rejects(() => access(join(root, "dist/without-script")));
+    assert.match(await readFile(join(root, "dist/with-script/index.html"), "utf8"), /With script/);
+    assert.equal(await readFile(join(root, "dist/with-script/script.js"), "utf8"), "window.loaded = true;\n");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("body build keeps parent index files beside nested route output", async () => {
+  const root = await project({
+    "src/pages/parent/child/index.html": "<html><body>Child</body></html>",
+    "src/pages/parent/index.html": "<html><body>Parent</body></html>",
+  });
+
+  try {
+    await build({ cwd: root, mode: "body" });
+
+    assert.match(await readFile(join(root, "dist/parent/child.html"), "utf8"), /Child/);
+    assert.match(await readFile(join(root, "dist/parent/index.html"), "utf8"), /Parent/);
+    await assert.rejects(() => access(join(root, "dist/parent.html")));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("body build keeps base route index files beside copied assets", async () => {
+  const root = await project({
+    "src/pages/index.html": "<html><body>Home</body></html>",
+    "src/shared/assets/logo.svg": "<svg/>",
+  });
+
+  try {
+    await build({ config: { baseRoute: "partner" }, cwd: root, mode: "body" });
+
+    assert.match(await readFile(join(root, "dist/partner/index.html"), "utf8"), /Home/);
+    assert.equal(await readFile(join(root, "dist/partner/assets/logo.svg"), "utf8"), "<svg/>");
+    await assert.rejects(() => access(join(root, "dist/partner.html")));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("minifies shared styles that are inlined for body builds", async () => {
+  const root = await project({
+    "src/pages/index.html": '<html><head><link use="fonts.css"></head><body>Content</body></html>',
+    "src/shared/styles/fonts.css": "/* font styles */\n:root { --font-size: 16px; }\n",
+  });
+
+  try {
+    await build({ cwd: root, mode: "body" });
+
+    const fragment = await readFile(join(root, "dist/index.html"), "utf8");
+
+    assert.doesNotMatch(fragment, /font styles/);
+    assert.match(fragment, /<style data-href="shared\/styles\/fonts\.css">:root\{--font-size:16px\}<\/style>/);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

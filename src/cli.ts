@@ -68,7 +68,7 @@ const printBuild = ({ duration, ...result }: Awaited<ReturnType<typeof build>> &
   }
 
   console.log(
-    `\n${result.pages.length} pages\n${result.componentCount} components\nOutput: ${result.config.outDir}\n\n✓ built in ${displayDuration(duration)}\n`,
+    `\n${result.pages.length} pages\n${result.componentCount} components\nOutput: ${result.config.outPath}\n\n✓ built in ${displayDuration(duration)}\n`,
   );
 };
 

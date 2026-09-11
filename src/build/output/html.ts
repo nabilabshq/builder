@@ -1,7 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { relative } from "node:path";
 
-import type { NabiConfig, SharedDependencies } from "@/types";
+import { minifyCss, minifyJs } from "@/build/minify";
+import type { NabiConfig, SharedDependencies, SharedDependencyType } from "@/types";
 import type { HtmlNode } from "@/utils/html";
 import { parseDocument, serializeHtml } from "@/utils/html";
 
@@ -20,6 +21,7 @@ type ReadSharedSourcesProps = {
   directory: string;
   paths: string[];
   root: string;
+  transform: (source: string) => Promise<string> | string;
 };
 
 type InlineSourceProps = {
@@ -35,6 +37,7 @@ type InlineSharedDependenciesProps = {
   config: NabiConfig;
   dependencies: SharedDependencies;
   html: string;
+  types?: SharedDependencyType[];
 };
 
 type InlineSharedElement = {
@@ -50,6 +53,7 @@ type SharedSourceDefinition = {
   directory: string;
   element: InlineSharedElement;
   root: (config: NabiConfig) => string;
+  type: SharedDependencyType;
 };
 
 const findElement = (node: HtmlNode, tagName: string): HtmlNode | undefined => {
@@ -87,12 +91,14 @@ const sharedSourceDefinitions = [
     directory: "styles",
     element: inlineSharedElements.stylesheet,
     root: (config) => config.stylesPath,
+    type: "stylesheet",
   },
   {
     dependencies: (dependencies) => dependencies.scripts,
     directory: "js",
     element: inlineSharedElements.script,
     root: (config) => config.jsPath,
+    type: "script",
   },
 ] satisfies SharedSourceDefinition[];
 
@@ -123,7 +129,7 @@ const extractElements = (node: HtmlNode, tagName: string, predicate: (node: Html
 const sharedSourceUrl = ({ baseRoute, directory, path, root }: SharedSourceUrlProps) =>
   `/${[baseRoute, directory, relative(root, path).replaceAll("\\", "/")].filter(Boolean).join("/")}`;
 
-const readSharedSources = async ({ config, directory, paths, root }: ReadSharedSourcesProps) => {
+const readSharedSources = async ({ config, directory, paths, root, transform }: ReadSharedSourcesProps) => {
   const entries = await Promise.all(
     [...new Set(paths)].map(async (path) => {
       const source = await readFile(path, "utf8");
@@ -137,7 +143,7 @@ const readSharedSources = async ({ config, directory, paths, root }: ReadSharedS
         }),
         {
           path: sourcePathFromProject({ config, path }),
-          source,
+          source: await transform(source),
         },
       ] as const;
     }),
@@ -171,16 +177,27 @@ const inlineSharedSource = ({ annotate, definition, node, rawBlock, sources }: I
 };
 
 export const inlineSharedDependencies = async (props: InlineSharedDependenciesProps) => {
-  const { annotate, config, dependencies, html } = props;
+  const { annotate, config, dependencies, html, types } = props;
+  const definitions = types
+    ? sharedSourceDefinitions.filter((definition) => types.includes(definition.type))
+    : sharedSourceDefinitions;
 
   const sources = await Promise.all(
-    sharedSourceDefinitions.map(async (definition) => ({
+    definitions.map(async (definition) => ({
       definition,
       sources: await readSharedSources({
         config,
         directory: definition.directory,
         paths: definition.dependencies(dependencies),
         root: definition.root(config),
+        transform:
+          definition.type === "stylesheet"
+            ? config.minify.css
+              ? minifyCss
+              : (source) => source
+            : config.minify.js
+              ? minifyJs
+              : (source) => source,
       }),
     })),
   );
@@ -220,7 +237,9 @@ export const bodyOutput = ({ config, html }: { config: NabiConfig; html: string 
   const document = parseDocument(html);
   const body = findElement(document, "body");
   const styles = extractElements(document, "style");
-  const scripts = extractElements(document, "script");
+  const scripts = extractElements(document, "script").filter(
+    (script) => attribute(script, "type")?.value === "application/json",
+  );
   const globalStylePath = `${sourcePathFromProject({ config, path: config.stylesPath })}/`;
   const globalStyles: HtmlNode[] = [];
   const componentStyles: HtmlNode[] = [];

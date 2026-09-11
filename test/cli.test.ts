@@ -36,6 +36,7 @@ test("CLI reports build duration", async () => {
 
     assert.equal(built.code, 0);
     assert.match(built.output, /Building project\.\.\./);
+    assert.ok(built.output.includes(`Output: ${join(root, "dist")}`));
     assert.match(built.output, /built in \d+(?:ms|\.\d+s)/);
 
     const unknown = await runCli(root, ["init"]);
