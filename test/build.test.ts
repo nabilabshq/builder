@@ -61,6 +61,44 @@ test("split build emits page-owned CSS, JS, assets, and manifest", async () => {
   }
 });
 
+test("build emits error pages without registering them as regular routes", async () => {
+  const root = await project({
+    "src/pages/404.css": ".error { color: red; }",
+    "src/pages/404.html": '<html><head></head><body class="error">Missing</body></html>',
+    "src/pages/index.html": "<html><head></head><body>Home</body></html>",
+  });
+
+  try {
+    const result = await build({ config: { minify: { css: false } }, cwd: root });
+
+    assert.equal(result.pages.length, 1);
+    assert.match(await readFile(join(root, "dist/404.html"), "utf8"), /Missing/);
+    assert.match(await readFile(join(root, "dist/404.html"), "utf8"), /href="\/404\/style.css"/);
+    assert.match(await readFile(join(root, "dist/404/style.css"), "utf8"), /error/);
+    await assert.rejects(() => readFile(join(root, "dist/404/index.html")));
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("build emits dynamic error pages for each route context", async () => {
+  const root = await project({
+    "src/data/cities.json": JSON.stringify({ msk: { name: "Moscow" }, spb: { name: "Saint Petersburg" } }),
+    "src/pages/rabota/[city]/_route.json": JSON.stringify({ "@data": "cities.json" }),
+    "src/pages/rabota/[city]/404.html": "<html><body>Missing {{:city.name}}</body></html>",
+    "src/pages/rabota/[city]/index.html": "<html><body>{{:city.name}}</body></html>",
+  });
+
+  try {
+    await build({ cwd: root });
+
+    assert.match(await readFile(join(root, "dist/rabota/msk/404.html"), "utf8"), /Missing Moscow/);
+    assert.match(await readFile(join(root, "dist/rabota/spb/404.html"), "utf8"), /Missing Saint Petersburg/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("blocks shared asset path traversal", async () => {
   const root = await project({
     "src/pages/index.html": '<html><body><img src="@assets/../../secret.png"></body></html>',

@@ -6,6 +6,8 @@ import { remove } from "@/utils/files";
 import { replaceOutput, syncOutput, temporaryPath } from "./filesystem";
 import { writeHybridBuild } from "./write";
 
+export { writeDevPage } from "./write";
+
 export const writeBuild = async ({ atomic = true, config, copyAssets = true, mode, pages }: BuildWriteOptions) => {
   const temporary = temporaryPath(config);
 

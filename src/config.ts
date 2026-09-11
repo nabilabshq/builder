@@ -23,6 +23,7 @@ const defaults: Required<NabiConfigInput> = {
   dataDir: "data",
   defaultBuildMode: "split",
   dev: { port: 2111 },
+  errorPageFileName: "404",
   images: { optimize: false },
   minify: { css: true, html: false, js: false },
   outDir: "dist",
@@ -92,6 +93,14 @@ const normaliseRouteFileName = (value: unknown) => {
   return value;
 };
 
+const normaliseErrorPageFileName = (value: unknown) => {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) {
+    throw new NabiError('errorPageFileName must be a filename without an extension, for example "404".');
+  }
+
+  return value;
+};
+
 export const loadConfig = async (props: LoadConfigOptions = {}): Promise<NabiConfig> => {
   const { config: overrides = {}, cwd = process.cwd() } = props;
 
@@ -146,6 +155,7 @@ export const loadConfig = async (props: LoadConfigOptions = {}): Promise<NabiCon
 
   const baseRoute = normaliseBaseRoute(raw.baseRoute);
   const pagesDir = normalisePagesDir(raw.pagesDir);
+  const errorPageFileName = normaliseErrorPageFileName(raw.errorPageFileName);
   const routeFileName = normaliseRouteFileName(raw.routeFileName);
   const dataDir = normaliseProjectDir({ example: "data", name: "dataDir", value: raw.dataDir });
   const sharedDir = normaliseSharedDir(raw.sharedDir);
@@ -168,6 +178,7 @@ export const loadConfig = async (props: LoadConfigOptions = {}): Promise<NabiCon
     dataDir,
     dataPath: resolve(srcPath, dataDir),
     dev: { port },
+    errorPageFileName,
     images: { optimize },
     jsPath: resolve(srcPath, sharedDir, "js"),
     minify: { css, html, js },

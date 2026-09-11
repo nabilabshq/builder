@@ -29,6 +29,7 @@ test("loads optional nabi.config.js with production defaults", async () => {
     assert.equal(config.baseRoute, "partner/rabota");
     assert.equal(config.pagesDir, "pages");
     assert.equal(config.pagesPath, join(root, "src/pages"));
+    assert.equal(config.errorPageFileName, "404");
     assert.equal(config.sharedDir, "shared");
     assert.equal(config.sharedPath, join(root, "src/shared"));
     assert.equal(config.defaultBuildMode, "body");
@@ -72,6 +73,19 @@ test("uses and validates the dynamic route file name", async () => {
     () => loadConfig({ config: { routeFileName: "routes.json" } }),
     /routeFileName must be a filename without an extension/,
   );
+});
+
+test("uses and validates the error page file name", async () => {
+  const config = await loadConfig({ config: { errorPageFileName: "missing" } });
+
+  assert.equal(config.errorPageFileName, "missing");
+
+  for (const errorPageFileName of ["404.html", "", "pages/404"]) {
+    await assert.rejects(
+      () => loadConfig({ config: { errorPageFileName } }),
+      /errorPageFileName must be a filename without an extension/,
+    );
+  }
 });
 
 test("requires dev.port to be an integer between 1 and 65535", async () => {

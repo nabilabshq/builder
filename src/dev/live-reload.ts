@@ -1,6 +1,12 @@
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
 
 import { WebSocket, WebSocketServer } from "ws";
+
+type CreateLiveReloadProps = {
+  onRouteActive: (route: string) => void;
+  onRouteInactive: (route: string) => void;
+  server: Server;
+};
 
 const liveReloadClient = `<script data-nabi-live-reload>(function () {
   let connected = false;
@@ -20,6 +26,7 @@ const liveReloadClient = `<script data-nabi-live-reload>(function () {
     socket.addEventListener('open', () => {
       if (connected) return location.reload();
       connected = true;
+      socket.send(location.pathname);
     });
     socket.addEventListener('message', event => {
       if (event.data !== 'css') return location.reload();
@@ -37,7 +44,17 @@ export const injectReloadClient = (html: string) => {
   return html.replace(/<\/body\s*>/i, `${liveReloadClient}</body>`);
 };
 
-export const createLiveReload = (server: Server) => {
+const routeMessage = (request: IncomingMessage, value: unknown) => {
+  if (typeof value !== "string" || !value.startsWith("/")) return;
+
+  try {
+    return new URL(value, `http://${request.headers.host ?? "localhost"}`).pathname;
+  } catch {
+    return;
+  }
+};
+
+export const createLiveReload = ({ onRouteActive, onRouteInactive, server }: CreateLiveReloadProps) => {
   const sockets = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (request, socket, head) => {
@@ -46,6 +63,27 @@ export const createLiveReload = (server: Server) => {
     }
 
     sockets.handleUpgrade(request, socket, head, (client) => sockets.emit("connection", client, request));
+  });
+
+  sockets.on("connection", (client, request) => {
+    let route: string | undefined;
+
+    client.on("message", (value) => {
+      const nextRoute = routeMessage(request, value.toString());
+
+      if (!nextRoute || nextRoute === route) return;
+
+      if (route) {
+        onRouteInactive(route);
+      }
+
+      route = nextRoute;
+      onRouteActive(route);
+    });
+
+    client.once("close", () => {
+      if (route) onRouteInactive(route);
+    });
   });
 
   return {

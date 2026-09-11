@@ -1,14 +1,12 @@
 import { join } from "node:path";
 
 import { requestRoute } from "@/routing";
-import type { NabiConfig } from "@/types";
+import type { BuiltPage, NabiConfig } from "@/types";
 import { resolveWithin } from "@/utils/paths";
-
-import type { DevServerState } from "./types";
 
 type OutputPathForRequestProps = {
   config: NabiConfig;
-  pages: DevServerState["pages"];
+  pages: Map<string, BuiltPage>;
   requested: string;
 };
 
@@ -25,7 +23,7 @@ const sharedOutputPathForRoute = (config: NabiConfig, route: string) => {
   }
 };
 
-const pageResourcePathForRoute = (pages: DevServerState["pages"], route: string) => {
+const pageResourcePathForRoute = (pages: Map<string, BuiltPage>, route: string) => {
   for (const page of pages.values()) {
     if (page.resources.css.length && route === [page.publicRoute, "style.css"].filter(Boolean).join("/")) {
       return [page.outputDir, "style.css"].filter((part) => part !== ".").join("/");

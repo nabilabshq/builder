@@ -8,13 +8,15 @@ import { inside } from "@/utils/paths";
 import { isComponentSource, localComponentPaths } from "./components";
 import { expandDynamicPage } from "./dynamic/expand";
 import type { RouteDataCache } from "./dynamic/types";
-import { displayRoute, fileToRoute, mergeRouteSegments, routeToOutput, toPosix } from "./paths";
+import { cleanRoute, displayRoute, fileToRoute, mergeRouteSegments, routeToOutput, toPosix } from "./paths";
 
 type DiscoverPagesOptions = {
   baseRoute?: string;
   cwd?: string;
   dataPath?: string;
+  errorPageFileName?: string;
   ignoredPaths?: string[];
+  includeErrorPages?: boolean;
   rootPath: string;
   routeFileName?: string;
 };
@@ -41,7 +43,7 @@ const collisionSource = ({ cwd, page }: { cwd: string; page: PageEntry }) => {
   return `${source}\n  Dynamic context: ${context}`;
 };
 
-const createPageEntry = async (props: CreatePageEntryProps): Promise<PageEntry> => {
+export const createPageEntry = async (props: CreatePageEntryProps): Promise<PageEntry> => {
   const { path, publicRoute, rootPath, route, routeContext, routeData } = props;
 
   const fileName = basename(path);
@@ -62,12 +64,22 @@ const createPageEntry = async (props: CreatePageEntryProps): Promise<PageEntry> 
 };
 
 export const discoverPages = async (props: DiscoverPagesOptions): Promise<PageEntry[]> => {
-  const { baseRoute = "", cwd = process.cwd(), ignoredPaths = [], rootPath, routeFileName = "_route" } = props;
+  const {
+    baseRoute = "",
+    cwd = process.cwd(),
+    errorPageFileName = "404",
+    ignoredPaths = [],
+    includeErrorPages = false,
+    rootPath,
+    routeFileName = "_route",
+  } = props;
 
   const dataPath = props.dataPath ?? resolve(rootPath, "..", "data");
 
   const candidates = (await listFiles(rootPath, [".html"])).filter((path) => {
     if (isComponentSource({ path, rootPath })) return false;
+
+    if ((basename(path) === `${errorPageFileName}.html`) !== includeErrorPages) return false;
 
     return !ignoredPaths.some((ignoredPath) => inside(ignoredPath, path));
   });
@@ -134,4 +146,13 @@ export const discoverPages = async (props: DiscoverPagesOptions): Promise<PageEn
   }
 
   return pages.sort((left, right) => left.publicRoute.localeCompare(right.publicRoute));
+};
+
+export const discoverErrorPages = async (props: DiscoverPagesOptions): Promise<PageEntry[]> => {
+  const pages = await discoverPages({ ...props, includeErrorPages: true });
+
+  return pages.map((page) => ({
+    ...page,
+    outputPath: `${cleanRoute(page.publicRoute)}.html`,
+  }));
 };

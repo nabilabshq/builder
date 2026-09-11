@@ -44,6 +44,11 @@ type WriteHybridBuildProps = {
   temporary: string;
 };
 
+type WriteDevPageProps = {
+  config: NabiConfig;
+  page: BuiltPage;
+};
+
 const writeSharedFiles = async ({ directory, paths, root, temporary, transform }: WriteSharedFilesProps) => {
   await Promise.all(
     paths.map(async (path) => {
@@ -152,4 +157,22 @@ export const writeHybridBuild = async ({ config, copyAssets, mode, pages, tempor
   if (mode === "split") {
     await writeText(join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   }
+};
+
+export const writeDevPage = async ({ config, page }: WriteDevPageProps) => {
+  await writeSharedDependencies({
+    config,
+    pages: [page],
+    temporary: config.outPath,
+  });
+
+  await writePage({
+    config,
+    isBody: false,
+    isInline: false,
+    manifest: {},
+    page,
+    resourceCache: { css: new Map(), js: new Map() },
+    temporary: config.outPath,
+  });
 };

@@ -11,6 +11,7 @@ export type NabiConfigInput = {
   dataDir?: string;
   defaultBuildMode?: BuildMode;
   dev?: Partial<DevConfig>;
+  errorPageFileName?: string;
   images?: Partial<ImagesConfig>;
   minify?: Partial<MinifyConfig>;
   outDir?: string;
@@ -74,5 +75,6 @@ export type BuiltPage = PageEntry & {
   dependencies: SharedDependencies;
   html: string;
   resources: PageResources;
+  sourceDependencies: string[];
   sourcePath: string;
 };

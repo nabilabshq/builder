@@ -5,7 +5,7 @@ import { compilePage } from "@/compiler/page";
 import { ComponentRegistry, createGlobalComponentRegistry, createHybridComponentRegistry } from "@/compiler/registry";
 import { collectHybridResources } from "@/compiler/resources";
 import { loadConfig } from "@/config";
-import { discoverPages as discoverPageRoutes, interpolateRouteData } from "@/routing";
+import { discoverErrorPages, discoverPages as discoverPageRoutes, interpolateRouteData } from "@/routing";
 import type { BuildMode, BuiltPage, Component, NabiConfig, NabiConfigInput, PageEntry } from "@/types";
 import { NabiError } from "@/utils/errors";
 import { readText, remove } from "@/utils/files";
@@ -45,6 +45,11 @@ type BuildOptions = {
 type CleanOptions = {
   config?: NabiConfigInput;
   cwd?: string;
+};
+
+type BuildDevPageProps = {
+  config: NabiConfig;
+  entry: PageEntry;
 };
 
 const createCssModuleData = async (path: string, sourcePath: string): Promise<CssModuleData> => {
@@ -124,13 +129,71 @@ const buildPage = async ({ config, cssModuleCache, entry, registry }: BuildPageO
     stylePath: entry.stylePath,
   });
 
+  const sourceDependencies = [
+    entry.path,
+    entry.scriptPath,
+    entry.stylePath,
+    ...resolvedComponents.flatMap((component) => [
+      component.path,
+      component.scriptPath,
+      component.stylePath,
+      ...(component.cssModulePaths ?? []),
+    ]),
+    ...pageModules.paths,
+    ...resources.css,
+    ...resources.cssModules,
+    ...resources.js,
+    ...dependencies.scripts,
+    ...dependencies.styles,
+  ];
+
   return {
     ...entry,
     dependencies,
     html,
     resources,
+    sourceDependencies: [...new Set(sourceDependencies)],
     sourcePath: entry.path,
   };
+};
+
+export const buildDevPage = async ({ config, entry }: BuildDevPageProps): Promise<BuiltPage> => {
+  const cssModuleCache: CssModuleCache = new Map();
+  const ignoredComponentPaths = [config.pagesPath, config.sharedPath];
+
+  const globalComponents = await createGlobalComponentRegistry({
+    ignoredPaths: ignoredComponentPaths,
+    reservedSourceDirectories: [config.pagesDir, config.sharedDir],
+    sourcePath: config.srcPath,
+  });
+
+  await loadComponentCssModules({
+    cache: cssModuleCache,
+    components: globalComponents,
+    sourcePath: config.srcPath,
+  });
+
+  const registry = await createHybridComponentRegistry({
+    globalComponents,
+    ignoredPaths: ignoredComponentPaths,
+    localComponentPaths: entry.localComponentPaths,
+    pagesDir: config.pagesDir,
+    reservedSourceDirectories: [config.pagesDir, config.sharedDir],
+    sourcePath: config.srcPath,
+  });
+
+  await loadComponentCssModules({
+    cache: cssModuleCache,
+    components: registry.components,
+    sourcePath: config.srcPath,
+  });
+
+  return buildPage({
+    config,
+    cssModuleCache,
+    entry,
+    registry,
+  });
 };
 
 export const discoverPages = async (config: NabiConfig) =>
@@ -138,6 +201,18 @@ export const discoverPages = async (config: NabiConfig) =>
     baseRoute: config.baseRoute,
     cwd: config.cwd,
     dataPath: config.dataPath,
+    errorPageFileName: config.errorPageFileName,
+    ignoredPaths: [config.sharedPath],
+    rootPath: config.pagesPath,
+    routeFileName: config.routeFileName,
+  });
+
+const discoverErrors = async (config: NabiConfig) =>
+  discoverErrorPages({
+    baseRoute: config.baseRoute,
+    cwd: config.cwd,
+    dataPath: config.dataPath,
+    errorPageFileName: config.errorPageFileName,
     ignoredPaths: [config.sharedPath],
     rootPath: config.pagesPath,
     routeFileName: config.routeFileName,
@@ -154,12 +229,14 @@ export const build = async (props: BuildOptions = {}) => {
   }
 
   const entries = await discoverPages(config);
+  const errorEntries = await discoverErrors(config);
 
   if (entries.length === 0) {
     throw new NabiError(`No HTML pages found in ${config.pagesDir}`);
   }
 
   const pages: BuiltPage[] = [];
+  const errorPages: BuiltPage[] = [];
   const cssModuleCache: CssModuleCache = new Map();
   const ignoredComponentPaths: string[] = [config.pagesPath, config.sharedPath];
 
@@ -177,7 +254,10 @@ export const build = async (props: BuildOptions = {}) => {
 
   const componentTags = new Set(globalComponents.keys());
 
-  for (const entry of entries) {
+  for (const [entry, isErrorPage] of [
+    ...entries.map((entry) => [entry, false] as const),
+    ...errorEntries.map((entry) => [entry, true] as const),
+  ]) {
     const registry = await createHybridComponentRegistry({
       globalComponents,
       ignoredPaths: ignoredComponentPaths,
@@ -204,7 +284,7 @@ export const build = async (props: BuildOptions = {}) => {
       registry,
     });
 
-    pages.push(page);
+    (isErrorPage ? errorPages : pages).push(page);
   }
 
   if (write) {
@@ -213,7 +293,7 @@ export const build = async (props: BuildOptions = {}) => {
       config,
       copyAssets,
       mode: buildMode,
-      pages,
+      pages: [...pages, ...errorPages],
     });
   }
 

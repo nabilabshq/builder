@@ -232,6 +232,7 @@ export class ProjectContext {
       baseRoute: this.config.baseRoute,
       cwd: this.config.cwd,
       dataPath: this.config.dataPath,
+      errorPageFileName: this.config.errorPageFileName,
       rootPath: this.config.pagesPath,
       routeFileName: this.config.routeFileName,
     }).then(() => undefined);
