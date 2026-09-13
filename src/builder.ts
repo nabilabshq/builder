@@ -6,6 +6,7 @@ import { ComponentRegistry, createGlobalComponentRegistry, createHybridComponent
 import { collectHybridResources } from "@/compiler/resources";
 import { loadConfig } from "@/config";
 import { discoverErrorPages, discoverPages as discoverPageRoutes, interpolateRouteData } from "@/routing";
+import { routeHookDependencies } from "@/routing/dynamic/hooks";
 import type { BuildMode, BuiltPage, Component, NabiConfig, NabiConfigInput, PageEntry } from "@/types";
 import { NabiError } from "@/utils/errors";
 import { readText, remove } from "@/utils/files";
@@ -145,6 +146,12 @@ const buildPage = async ({ config, cssModuleCache, entry, registry }: BuildPageO
     ...resources.js,
     ...dependencies.scripts,
     ...dependencies.styles,
+    ...(await routeHookDependencies({
+      pagePath: entry.path,
+      pagesPath: config.pagesPath,
+      routeFileName: config.routeFileName,
+      sourcePath: config.srcPath,
+    })),
   ];
 
   return {

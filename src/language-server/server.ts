@@ -14,6 +14,8 @@ import { diagnosticsFor } from "./features/diagnostics";
 import { documentLinksFor } from "./features/document-links";
 import { createProjectManager } from "./project";
 
+const routeDataDependency = /\.(?:js|json)$/;
+
 export const startLanguageServer = () => {
   const connection = createConnection(ProposedFeatures.all);
   const documents = new TextDocuments(TextDocument);
@@ -49,7 +51,7 @@ export const startLanguageServer = () => {
 
     return {
       capabilities: {
-        completionProvider: { triggerCharacters: ['"', "'", " ", "/", "@"] },
+        completionProvider: { triggerCharacters: ['"', "'", " ", "/", "@", ":", "."] },
         definitionProvider: true,
         documentLinkProvider: { resolveProvider: false },
         textDocumentSync: TextDocumentSyncKind.Incremental,
@@ -110,7 +112,13 @@ export const startLanguageServer = () => {
 
   documents.onDidOpen((event) => publishDiagnostics(event.document));
   documents.onDidChangeContent((event) => publishDiagnostics(event.document));
-  documents.onDidSave((event) => publishDiagnostics(event.document));
+  documents.onDidSave((event) => {
+    if (routeDataDependency.test(event.document.uri)) {
+      projects.invalidate();
+    }
+
+    return publishDiagnostics(event.document);
+  });
   documents.onDidClose((event) => connection.sendDiagnostics({ diagnostics: [], uri: event.document.uri }));
   documents.listen(connection);
 

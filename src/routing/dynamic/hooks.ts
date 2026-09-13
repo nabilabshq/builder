@@ -1,16 +1,90 @@
 import { register } from "node:module";
+import { dirname, extname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { RouteData } from "@/types";
 import { NabiError } from "@/utils/errors";
-import { fileExists } from "@/utils/files";
+import { fileExists, readText } from "@/utils/files";
 
 import type { RouteHook, RouteHookCache, RouteHookProps } from "./types";
+
+type RouteHookDependenciesProps = {
+  pagePath: string;
+  pagesPath: string;
+  routeFileName: string;
+  sourcePath: string;
+};
+
+const importSpecifier = /(?:import|export)\s+(?:[^"']*?\s+from\s+)?["']([^"']+)["']/g;
+
+const scriptPathFor = async (path: string) => {
+  const candidates = extname(path)
+    ? [path]
+    : [path, `${path}.js`, `${path}.mjs`, `${path}.json`, join(path, "index.js")];
+
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) {
+      return candidate;
+    }
+  }
+};
+
+const importedPathFor = (specifier: string, sourcePath: string, path: string) => {
+  if (specifier.startsWith("@/")) {
+    return resolve(sourcePath, specifier.slice(2));
+  }
+
+  if (specifier.startsWith(".")) {
+    return resolve(dirname(path), specifier);
+  }
+};
+
+export const routeHookDependencies = async (props: RouteHookDependenciesProps) => {
+  const { pagePath, pagesPath, routeFileName, sourcePath } = props;
+
+  const dependencies = new Set<string>();
+
+  const visit = async (path: string): Promise<void> => {
+    if (dependencies.has(path)) return;
+
+    dependencies.add(path);
+    const source = await readText(path);
+
+    for (const [, specifier] of source.matchAll(importSpecifier)) {
+      const importedSourcePath = importedPathFor(specifier, sourcePath, path);
+
+      if (!importedSourcePath) continue;
+
+      const imported = await scriptPathFor(importedSourcePath);
+
+      if (imported) {
+        await visit(imported);
+      }
+    }
+  };
+
+  let directory = dirname(pagePath);
+
+  while (!relative(pagesPath, directory).startsWith("..")) {
+    const hookPath = join(directory, `${routeFileName}.js`);
+
+    if (await fileExists(hookPath)) {
+      await visit(hookPath);
+    }
+
+    if (directory === pagesPath) break;
+
+    directory = dirname(directory);
+  }
+
+  return [...dependencies];
+};
 
 const routeAliasLoader = String.raw`
 import { readFile, stat } from "node:fs/promises";
 import { dirname, extname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
 
 const compilerConfigs = new Map();
 
@@ -44,17 +118,21 @@ const compilerAliasesFor = async (path) => {
       try {
         const config = JSON.parse(await readFile(configPath, "utf8"));
         const paths = config.compilerOptions?.paths;
-        const aliases = paths && typeof paths === "object"
-          ? Object.entries(paths)
-              .filter(([, targets]) => Array.isArray(targets) && targets.every((target) => typeof target === "string"))
-              .map(([pattern, targets]) => ({
-                pattern,
-                targets: targets.map((target) => resolvePath(directory, target)),
-              }))
-              .sort((left, right) => right.pattern.replace("*", "").length - left.pattern.replace("*", "").length)
-          : [];
+        const aliases =
+          paths && typeof paths === "object"
+            ? Object.entries(paths)
+                .filter(
+                  ([, targets]) => Array.isArray(targets) && targets.every((target) => typeof target === "string"),
+                )
+                .map(([pattern, targets]) => ({
+                  pattern,
+                  targets: targets.map((target) => resolvePath(directory, target)),
+                }))
+                .sort((left, right) => right.pattern.replace("*", "").length - left.pattern.replace("*", "").length)
+            : [];
 
         compilerConfigs.set(directory, aliases);
+
         return aliases;
       } catch (error) {
         if (!isMissing(error)) throw new Error("Invalid project compiler config: " + configPath);
@@ -65,6 +143,7 @@ const compilerAliasesFor = async (path) => {
 
     if (parent === directory) {
       compilerConfigs.set(directory, []);
+
       return [];
     }
 
@@ -77,9 +156,7 @@ const aliasPathFor = async (specifier, aliases) => {
     const star = alias.pattern.indexOf("*");
     const prefix = star === -1 ? alias.pattern : alias.pattern.slice(0, star);
     const suffix = star === -1 ? "" : alias.pattern.slice(star + 1);
-    const matches = star === -1
-      ? specifier === alias.pattern
-      : specifier.startsWith(prefix) && specifier.endsWith(suffix);
+    const matches = star === -1 ? specifier === alias.pattern : specifier.startsWith(prefix) && specifier.endsWith(suffix);
 
     if (!matches) continue;
 
@@ -94,22 +171,45 @@ const aliasPathFor = async (specifier, aliases) => {
 };
 
 export const resolve = async (specifier, context, nextResolve) => {
-  if (!context.parentURL?.startsWith("file:")) return nextResolve(specifier, context);
-  if (specifier.startsWith(".") || specifier.startsWith("/") || specifier.includes(":")) {
+  if (!context.parentURL?.startsWith("file:") || specifier.startsWith("/") || specifier.includes(":")) {
     return nextResolve(specifier, context);
+  }
+
+  const token = new URL(context.parentURL).searchParams.get("nabi");
+
+  if (specifier.startsWith(".")) {
+    const result = await nextResolve(specifier, context);
+
+    if (!token || !result.url.startsWith("file:")) {
+      return result;
+    }
+
+    const url = new URL(result.url);
+    url.searchParams.set("nabi", token);
+
+    return {
+      ...result,
+      shortCircuit: true,
+      url: url.href,
+    };
   }
 
   const aliases = await compilerAliasesFor(fileURLToPath(context.parentURL));
   const path = await aliasPathFor(specifier, aliases);
 
-  if (!path) return nextResolve(specifier, context);
+  if (!path) {
+    return nextResolve(specifier, context);
+  }
 
-  const details = await stat(path);
+  const details = stat(path);
   const url = new URL(pathToFileURL(path));
 
-  url.searchParams.set("nabi", String(details.mtimeMs));
+  url.searchParams.set("nabi", token ?? String((await details).mtimeMs));
 
-  return { shortCircuit: true, url: url.href };
+  return {
+    shortCircuit: true,
+    url: url.href,
+  };
 };
 
 export const load = async (url, context, nextLoad) => {

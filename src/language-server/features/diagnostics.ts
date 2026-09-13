@@ -1,4 +1,4 @@
-import { extname } from "node:path";
+import { basename, extname } from "node:path";
 
 import type { Diagnostic, Range } from "vscode-languageserver/node.js";
 import { DiagnosticSeverity } from "vscode-languageserver/node.js";
@@ -7,10 +7,24 @@ import { resolveSharedDependency } from "@/compiler/dependencies";
 import { inside } from "@/utils/paths";
 
 import type { HtmlAttribute, HtmlElement } from "../html";
-import { attributeValueRange, elementRange, isHtmlElement, parseHtml, rangeAt, visitElements } from "../html";
+import {
+  attributeValueOffsets,
+  attributeValueRange,
+  elementRange,
+  isHtmlElement,
+  parseHtml,
+  rangeAt,
+  visitElements,
+} from "../html";
 import type { DependencyType, ProjectContext } from "../project";
 import { pathFromUri, ProjectManager } from "../project";
 import { isAvailableComponent, sharedElements, unavailableComponentMessage } from "./shared";
+
+type RouteHookDiagnosticFor = {
+  context: ProjectContext;
+  filePath: string;
+  text: string;
+};
 
 type DiagnosticsFor = {
   projects: ProjectManager;
@@ -23,6 +37,14 @@ type CheckShared = {
   node: HtmlElement;
   type: DependencyType;
 };
+
+type RouteCondition = {
+  attribute: HtmlAttribute;
+  node: HtmlElement;
+  path: string;
+};
+
+const routePlaceholder = /^{{:([\w.-]+)}}$/;
 
 const diagnostic = ({ message, range }: { message: string; range: Range }): Diagnostic => ({
   message,
@@ -45,6 +67,29 @@ const routingErrorFor = async ({ context, filePath }: { context: ProjectContext;
   }
 };
 
+const routeHookDiagnosticFor = ({ context, filePath, text }: RouteHookDiagnosticFor) => {
+  if (basename(filePath) !== `${context.config.routeFileName}.js`) return;
+
+  const defaultExportAt = text.search(/\bexport\s+default\b/);
+
+  if (defaultExportAt < 0) {
+    return diagnostic({
+      message: `Route hook must export a default function: ${filePath}`,
+      range: rangeAt(text, 0, Math.min(text.length, 1)),
+    });
+  }
+
+  const exportedSource = text.slice(defaultExportAt);
+  const hasBlockBody = /(?:=>|function(?:\s+[\w$]+)?\s*\([^)]*\))\s*{/.test(exportedSource);
+
+  if (hasBlockBody && !/\breturn\b/.test(exportedSource)) {
+    return diagnostic({
+      message: "Route hook with a block body must explicitly return an object, null, or undefined.",
+      range: rangeAt(text, defaultExportAt, defaultExportAt + "export default".length),
+    });
+  }
+};
+
 const hasDefaultSlotContent = (node: HtmlElement) =>
   (node.childNodes ?? []).some((child) => {
     const slot = child.attrs?.find((attribute) => attribute.name === "slot");
@@ -63,6 +108,27 @@ const isSelfClosingUse = ({ node, text }: { node: HtmlElement; text: string }) =
   return tag ? /\/\s*>$/.test(text.slice(tag.startOffset, tag.endOffset)) : false;
 };
 
+const routeConditionFor = (node: HtmlElement): RouteCondition | undefined => {
+  if (!isHtmlElement(node, "if")) return;
+
+  const attribute = node.attrs?.find((entry) => entry.name === "when");
+  const match = attribute ? routePlaceholder.exec(attribute.value) : undefined;
+
+  if (!attribute || !match) return;
+
+  return {
+    attribute,
+    node,
+    path: match[1]!,
+  };
+};
+
+const routeConditionRange = ({ attribute, node, path, text }: RouteCondition & { text: string }) => {
+  const { start } = attributeValueOffsets({ attribute, node, text });
+
+  return rangeAt(text, start + 3, start + 3 + path.length);
+};
+
 export const diagnosticsFor = async ({ projects, text, uri }: DiagnosticsFor) => {
   let context: ProjectContext;
 
@@ -74,7 +140,13 @@ export const diagnosticsFor = async ({ projects, text, uri }: DiagnosticsFor) =>
 
   const filePath = pathFromUri(uri);
   const diagnostics: Diagnostic[] = [];
-  const routingError = await routingErrorFor({ context, filePath });
+  const routeHookDiagnostic = routeHookDiagnosticFor({ context, filePath, text });
+
+  if (routeHookDiagnostic) {
+    diagnostics.push(routeHookDiagnostic);
+  }
+
+  const routingError = routeHookDiagnostic ? undefined : await routingErrorFor({ context, filePath });
 
   if (routingError) {
     diagnostics.push(
@@ -88,6 +160,23 @@ export const diagnosticsFor = async ({ projects, text, uri }: DiagnosticsFor) =>
   if (extname(filePath) === ".json") return diagnostics;
 
   const document = parseHtml(text);
+  const routeConditions: RouteCondition[] = [];
+
+  visitElements(document, (node) => {
+    const condition = routeConditionFor(node);
+
+    if (condition) {
+      routeConditions.push(condition);
+    }
+  });
+
+  const routeInterpolation = routeConditions.length
+    ? await context
+        .routeInterpolation(filePath)
+        .then(({ booleanPaths, paths }) => ({ booleanPaths: new Set(booleanPaths), paths: new Set(paths) }))
+        .catch(() => undefined)
+    : undefined;
+
   const registry = await context.registryFor(filePath);
   const owner = await context.localComponentOwner(filePath);
   const componentMetadata = await context.componentMetadata(filePath);
@@ -113,6 +202,24 @@ export const diagnosticsFor = async ({ projects, text, uri }: DiagnosticsFor) =>
   const pending: Promise<void>[] = [];
 
   visitElements(document, (node, parent) => {
+    const condition = routeConditionFor(node);
+
+    if (condition && routeInterpolation && !routeInterpolation.paths.has(condition.path)) {
+      diagnostics.push(
+        diagnostic({
+          message: `Dynamic route value not found: "${condition.path}"`,
+          range: routeConditionRange({ ...condition, text }),
+        }),
+      );
+    } else if (condition && routeInterpolation && !routeInterpolation.booleanPaths.has(condition.path)) {
+      diagnostics.push(
+        diagnostic({
+          message: '<if> "when" must resolve to "true" or "false".',
+          range: routeConditionRange({ ...condition, text }),
+        }),
+      );
+    }
+
     if (isHtmlElement(node, "use")) {
       const ref = node.attrs?.find((attribute) => attribute.name === "ref");
 

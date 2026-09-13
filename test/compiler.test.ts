@@ -71,6 +71,39 @@ test("supports boolean, data, aria, empty props, and omits ref from forwarded at
   assert.doesNotMatch(html, /ref=/);
 });
 
+test("compiles conditional branches before resolving components", async () => {
+  const html = await compile(
+    {
+      fallback: "<strong>Fallback</strong>",
+      visible: "<strong>Visible</strong>",
+    },
+    '<html><body><if when="true"><use ref="ui/visible" /><else><use ref="ui/fallback" /></else></if><if when="false"><use ref="ui/missing" /></if></body></html>',
+  );
+
+  assert.match(html, /<body><strong>Visible<\/strong><\/body>/);
+  assert.doesNotMatch(html, /Fallback|missing|<if|<else/);
+});
+
+test("supports conditional component props and validates conditional markup", async () => {
+  const html = await compile(
+    {
+      feature: '<if when="{{enabled}}"><strong>Enabled</strong><else><strong>Disabled</strong></else></if>',
+    },
+    '<html><body><use ref="ui/feature" /></body></html>',
+  );
+
+  assert.match(html, /<body><strong>Disabled<\/strong><\/body>/);
+  assert.doesNotMatch(html, /Enabled|<if|<else/);
+  await assert.rejects(
+    () => compile({}, "<html><body><if><p>Missing condition</p></if></body></html>"),
+    /<if> requires a "when" attribute/,
+  );
+  await assert.rejects(
+    () => compile({}, "<html><body><else>Outside</else></body></html>"),
+    /<else> must be a direct child of <if>/,
+  );
+});
+
 test("requires compact syntax for empty component invocations without a default slot", async () => {
   await assert.rejects(
     () => compile({ icon: "<svg></svg>" }, '<html><body><use ref="ui/icon"></use></body></html>'),

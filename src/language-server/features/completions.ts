@@ -38,6 +38,16 @@ type PropItem = {
   values?: string[];
 };
 
+type InterpolationPrefix = { prefix: string; start: number };
+
+type InterpolationItemProps = {
+  hasChildren: boolean;
+  path: string;
+  position: Position;
+  prefix: InterpolationPrefix;
+  text: string;
+};
+
 type CompletionForShared = {
   context: ProjectContext;
   prefix: string;
@@ -98,6 +108,50 @@ const propValueItem = (value: string): CompletionItem => ({
   kind: CompletionItemKind.Value,
   label: value,
 });
+
+const interpolationPrefixAt = ({ position, text }: Omit<CompletionFor, "projects" | "uri">) => {
+  const offset = offsetAt(text, position);
+  const match = /{{:([\w.-]*)$/.exec(text.slice(0, offset));
+
+  if (!match) return;
+
+  const prefix = match[1]!;
+
+  return {
+    prefix,
+    start: offset - prefix.length,
+  };
+};
+
+const interpolationItem = (props: InterpolationItemProps): CompletionItem => {
+  const { hasChildren, path, position, prefix, text } = props;
+
+  const offset = offsetAt(text, position);
+
+  return {
+    ...(hasChildren ? { command: triggerSuggest } : {}),
+    detail: hasChildren ? "Dynamic route object" : "Dynamic route value",
+    documentation: hasChildren
+      ? "Object from the current dynamic route data. Type a dot to select a nested value."
+      : "Value from the current dynamic route data.",
+    kind: hasChildren ? CompletionItemKind.Struct : CompletionItemKind.Value,
+    label: path,
+    preselect: true,
+    sortText: `${hasChildren ? 1 : 0}_${path}`,
+    textEdit: {
+      newText: hasChildren ? `${path}.` : path,
+      range: rangeAt(text, prefix.start, offset),
+    },
+  };
+};
+
+const interpolationDepth = (path: string) => path.split(".").length;
+
+const interpolationMatches = (paths: string[], prefix: string) => {
+  const maximumDepth = prefix ? interpolationDepth(prefix) : 1;
+
+  return paths.filter((path) => path.startsWith(prefix) && interpolationDepth(path) <= maximumDepth);
+};
 
 const labelOf = (item: CompletionItem) => String(item.label);
 
@@ -193,6 +247,28 @@ export const completionsFor = async ({ position, projects, text, uri }: Completi
       position,
       text,
     });
+  }
+
+  const interpolationPrefix = interpolationPrefixAt({ position, text });
+
+  if (interpolationPrefix) {
+    const { paths } = await context.routeInterpolation(filePath).catch(() => ({ paths: [] }));
+    const hasChildren = (path: string) => paths.some((candidate) => candidate.startsWith(`${path}.`));
+    const sort = (a: string, b: string) => Number(hasChildren(a)) - Number(hasChildren(b)) || a.localeCompare(b);
+
+    return interpolationMatches(paths, interpolationPrefix.prefix)
+      .sort(sort)
+      .map((path) => {
+        const nested = hasChildren(path);
+
+        return interpolationItem({
+          hasChildren: nested,
+          path,
+          position,
+          prefix: interpolationPrefix,
+          text,
+        });
+      });
   }
 
   const cursor = tagContextAt(text, offsetAt(text, position));

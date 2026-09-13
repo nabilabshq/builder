@@ -394,6 +394,33 @@ test("builds conditional dynamic pages without exposing when to templates", asyn
   }
 });
 
+test("compiles conditional route content", async () => {
+  const root = await project({
+    "src/pages/[city]/_route.json": JSON.stringify({
+      msk: { featureCombo: true },
+      spb: { featureCombo: false },
+    }),
+    "src/pages/[city]/index.html":
+      '<html><body><if when="{{:city.featureBike}}"><article id="feature-bike">Bike</article></if><use ref="ui/features" feature-combo="{{:city.featureCombo}}" /></body></html>',
+    "src/ui/features/index.html":
+      '<section><if when="{{feature-combo}}"><article id="feature-combo">Combo</article><else><article id="feature-default">Default</article></else></if></section>',
+  });
+
+  try {
+    await build({ cwd: root });
+
+    const moscow = await readFile(join(root, "dist/msk/index.html"), "utf8");
+    const petersburg = await readFile(join(root, "dist/spb/index.html"), "utf8");
+
+    assert.match(moscow, /<article id="feature-combo">Combo<\/article>/);
+    assert.doesNotMatch(moscow, /feature-bike|feature-default|<if|<else/);
+    assert.match(petersburg, /<article id="feature-default">Default<\/article>/);
+    assert.doesNotMatch(petersburg, /feature-bike|feature-combo|<if|<else/);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("interpolates nested local route properties in component attributes", async () => {
   const root = await project({
     "src/pages/[page]/_route.json": JSON.stringify({

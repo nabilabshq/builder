@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 
 import { test } from "bun:test";
 import type { CompletionItem, TextEdit } from "vscode-languageserver/node.js";
-import { InsertTextFormat } from "vscode-languageserver/node.js";
+import { DiagnosticSeverity, InsertTextFormat } from "vscode-languageserver/node.js";
 
 import { completionsFor } from "@/language-server/features/completions.ts";
 import { definitionFor } from "@/language-server/features/definitions.ts";
@@ -442,6 +442,188 @@ test("language server replaces complete refs and resolves nested local component
   }
 });
 
+test("language server completes dynamic route interpolation paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-language-server-interpolation-"));
+
+  try {
+    const pagePath = join(root, "src/pages/[page]/index.html");
+    const routePath = join(root, "src/pages/[page]/_route.json");
+    const hookPath = join(root, "src/pages/[page]/_route.js");
+    const incomeDataPath = join(root, "src/data/income.json");
+    const dataPath = join(root, "src/data/pages.json");
+    const text = "{{:";
+
+    await Promise.all([mkdir(dirname(pagePath), { recursive: true }), mkdir(dirname(dataPath), { recursive: true })]);
+    await Promise.all([
+      writeFile(join(root, "jsconfig.json"), '{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}'),
+      writeFile(pagePath, text),
+      writeFile(
+        hookPath,
+        'import incomeData from "@/data/income.json"; export default ({ route }) => ({ canonical: `/${route.page}`, income: incomeData[route.page] });',
+      ),
+      writeFile(incomeDataPath, '{"courier":250000}'),
+      writeFile(routePath, '{"@data":"pages.json"}'),
+      writeFile(
+        dataPath,
+        JSON.stringify({
+          courier: {
+            features: { "feature-combo": true },
+            seo: { description: "Courier work" },
+            title: "Courier",
+          },
+        }),
+      ),
+    ]);
+
+    const uri = uriFromPath(pagePath);
+    const projects = createProjectManager({ workspaceFolders: [uriFromPath(root)] });
+    const items = await completionsFor({
+      position: positionAt(text, "{{:", 3),
+      projects,
+      text,
+      uri,
+    });
+
+    assert.deepEqual(labels(items), ["page"]);
+
+    const prefix = "{{:page.in";
+    const prefixItems = await completionsFor({
+      position: positionAt(prefix, "page.in", 7),
+      projects,
+      text: prefix,
+      uri,
+    });
+
+    assert.deepEqual(labels(prefixItems), ["page.income"]);
+    assert.deepEqual(textEditOf(itemFor(prefixItems, "page.income")), {
+      newText: "page.income",
+      range: {
+        end: { character: 10, line: 0 },
+        start: { character: 3, line: 0 },
+      },
+    });
+
+    const pagePrefix = "{{:page.";
+    const pageItems = await completionsFor({
+      position: { character: pagePrefix.length, line: 0 },
+      projects,
+      text: pagePrefix,
+      uri,
+    });
+
+    assert.deepEqual(labels(pageItems), ["page.canonical", "page.income", "page.title", "page.features", "page.seo"]);
+    const features = itemFor(pageItems, "page.features");
+
+    assert.equal(features.sortText, "1_page.features");
+    assert.equal(features.detail, "Dynamic route object");
+    assert.deepEqual(commandOf(features), {
+      command: "editor.action.triggerSuggest",
+      title: "Show completion suggestions",
+    });
+    assert.deepEqual(textEditOf(features), {
+      newText: "page.features.",
+      range: {
+        end: { character: 8, line: 0 },
+        start: { character: 3, line: 0 },
+      },
+    });
+
+    const nestedPrefix = "{{:page.seo.";
+    const nestedItems = await completionsFor({
+      position: { character: nestedPrefix.length, line: 0 },
+      projects,
+      text: nestedPrefix,
+      uri,
+    });
+
+    assert.deepEqual(labels(nestedItems), ["page.seo.description"]);
+
+    const featurePrefix = '<if when="{{:page.features.feature-';
+    const featureItems = await completionsFor({
+      position: { character: featurePrefix.length, line: 0 },
+      projects,
+      text: featurePrefix,
+      uri,
+    });
+
+    assert.deepEqual(labels(featureItems), ["page.features.feature-combo"]);
+
+    const invalidCondition = '<if when="{{:page.features.feature-com2bo}}"></if>';
+    const conditionDiagnostics = await diagnosticsFor({
+      projects,
+      text: invalidCondition,
+      uri,
+    });
+
+    assert.deepEqual(conditionDiagnostics, [
+      {
+        message: 'Dynamic route value not found: "page.features.feature-com2bo"',
+        range: {
+          end: { character: 41, line: 0 },
+          start: { character: 13, line: 0 },
+        },
+        severity: DiagnosticSeverity.Error,
+        source: "nabi",
+      },
+    ]);
+
+    await writeFile(
+      dataPath,
+      JSON.stringify({
+        courier: {
+          features: { "feature-bike": true },
+          seo: { description: "Courier work" },
+          title: "Courier",
+        },
+      }),
+    );
+    projects.invalidate();
+
+    const refreshedFeatureItems = await completionsFor({
+      position: { character: featurePrefix.length, line: 0 },
+      projects,
+      text: featurePrefix,
+      uri,
+    });
+
+    assert.deepEqual(labels(refreshedFeatureItems), ["page.features.feature-bike"]);
+
+    await writeFile(hookPath, "");
+    projects.invalidate();
+
+    assert.deepEqual(await diagnosticsFor({ projects, text: "", uri: uriFromPath(hookPath) }), [
+      {
+        message: `Route hook must export a default function: ${hookPath}`,
+        range: {
+          end: { character: 0, line: 0 },
+          start: { character: 0, line: 0 },
+        },
+        severity: DiagnosticSeverity.Error,
+        source: "nabi",
+      },
+    ]);
+
+    const missingReturn =
+      "export default ({ route: { city, folder, page } }) => {\n  const income = incomeData[city];\n};";
+    await writeFile(hookPath, missingReturn);
+    projects.invalidate();
+
+    assert.deepEqual(await diagnosticsFor({ projects, text: missingReturn, uri: uriFromPath(hookPath) }), [
+      {
+        message: "Route hook with a block body must explicitly return an object, null, or undefined.",
+        range: {
+          end: { character: 14, line: 0 },
+          start: { character: 0, line: 0 },
+        },
+        severity: DiagnosticSeverity.Error,
+        source: "nabi",
+      },
+    ]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("language server completes dynamic route metadata", async () => {
   const root = await mkdtemp(join(tmpdir(), "nabi-language-server-route-data-"));
 
@@ -529,6 +711,32 @@ test("language server completes dynamic route metadata", async () => {
       kind: "markdown",
       value: 'JSON file relative to dataDir.\n\n```json\n{\n  "msk": { "name": "Москва" }\n}\n```',
     });
+
+    const linkedData = '{"@data":["global/cities.json","income.json"]}';
+    const links = await documentLinksFor({
+      projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+      text: linkedData,
+      uri: uriFromPath(routeDataPath),
+    });
+
+    assert.deepEqual(
+      links.map((link) => link.target),
+      [uriFromPath(cityDataPath), uriFromPath(incomeDataPath)],
+    );
+    assert.deepEqual(
+      await definitionFor({
+        position: positionAt(linkedData, "income.json", 5),
+        projects: createProjectManager({ workspaceFolders: [uriFromPath(root)] }),
+        text: linkedData,
+        uri: uriFromPath(routeDataPath),
+      }),
+      [
+        {
+          range: { end: { character: 0, line: 0 }, start: { character: 0, line: 0 } },
+          uri: uriFromPath(incomeDataPath),
+        },
+      ],
+    );
   } finally {
     await rm(root, { force: true, recursive: true });
   }

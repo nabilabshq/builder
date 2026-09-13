@@ -2,6 +2,7 @@ import type { Component } from "@/types";
 import type { HtmlNode } from "@/utils/html";
 import { serializeHtml } from "@/utils/html";
 
+import { conditionalChildren, isHtmlElse } from "./conditional";
 import { componentError } from "./errors";
 import {
   attributeValue,
@@ -130,6 +131,17 @@ const compileNodes = (nodes: HtmlNode[], state: CompilationState) => {
   const result: HtmlNode[] = [];
 
   for (const node of nodes) {
+    if (isHtmlElse(node)) {
+      throw componentError("<else> must be a direct child of <if>.", state, node);
+    }
+
+    const selected = conditionalChildren({ node, state });
+
+    if (selected) {
+      result.push(...compileNodes(selected, state));
+      continue;
+    }
+
     if (isHtmlUse(node)) {
       result.push(...compileUse(node, state));
       continue;

@@ -5,6 +5,7 @@ import { resolveSharedDependency } from "@/compiler/dependencies";
 import type { HtmlAttribute, HtmlElement } from "../html";
 import { attributeValueOffsets, isHtmlElement, offsetAt, parseHtml, rangeAt, visitElements } from "../html";
 import { pathFromUri, ProjectManager, uriFromPath } from "../project";
+import { routeDataLinkAt } from "./route-data-links";
 import { isAvailableComponent, sharedElements } from "./shared";
 
 type AttributeMatch = {
@@ -36,12 +37,25 @@ const attributeAt = ({ position, text }: { position: Position; text: string }) =
 };
 
 export const definitionFor = async ({ position, projects, text, uri }: DefinitionFor): Promise<Location[]> => {
+  const context = await projects.contextForUri(uri);
+  const filePath = pathFromUri(uri);
+
+  if (filePath.endsWith(`${context.config.routeFileName}.json`)) {
+    const link = await routeDataLinkAt({ context, position, text });
+
+    return link
+      ? [
+          {
+            range: rangeAt("", 0, 0),
+            uri: uriFromPath(link.path),
+          },
+        ]
+      : [];
+  }
+
   const found = attributeAt({ position, text });
 
   if (!found) return [];
-
-  const context = await projects.contextForUri(uri);
-  const filePath = pathFromUri(uri);
 
   if (isHtmlElement(found.node, "use") && found.attribute.name === "ref") {
     try {

@@ -6,7 +6,7 @@ import { basename, extname, join, relative } from "node:path";
 import { writeDevPage } from "@/build/output";
 import { build, buildDevPage, discoverPages } from "@/builder";
 import { loadConfig } from "@/config";
-import { errorPageFor, requestRoute } from "@/routing";
+import { dynamicPageEntries, errorPageFor, requestRoute } from "@/routing";
 import type { BuiltPage, NabiConfig, NabiConfigInput } from "@/types";
 import { formatError } from "@/utils/errors";
 import { remove } from "@/utils/files";
@@ -280,6 +280,64 @@ export const startDev = async (options: StartDevOptions = {}) => {
     }
   };
 
+  const refreshDynamicRoutes = async (routes: Iterable<string>) => {
+    const sourcePaths = new Set(
+      [...routes].flatMap((route) => {
+        const page = state.pages.get(route);
+
+        return page?.entry.routeContext ? [page.entry.path] : [];
+      }),
+    );
+
+    if (!sourcePaths.size) {
+      return new Set<string>();
+    }
+
+    const entries = (
+      await Promise.all(
+        [...sourcePaths].map((path) =>
+          dynamicPageEntries({
+            baseRoute: config.baseRoute,
+            dataPath: config.dataPath,
+            path,
+            rootPath: config.pagesPath,
+            routeFileName: config.routeFileName,
+          }),
+        ),
+      )
+    ).flat();
+    const nextEntries = new Map(
+      entries.filter((entry) => sourcePaths.has(entry.path)).map((entry) => [entry.publicRoute, entry]),
+    );
+
+    const previousRoutes = [...state.pages]
+      .filter(([, page]) => sourcePaths.has(page.entry.path))
+      .map(([route]) => route);
+
+    for (const route of previousRoutes) {
+      if (nextEntries.has(route)) continue;
+
+      const page = state.pages.get(route);
+
+      if (page) {
+        await remove(join(config.outPath, page.entry.outputPath));
+      }
+
+      state.activePages.delete(route);
+      state.pages.delete(route);
+      removePage(state.incremental, route);
+    }
+
+    for (const [route, entry] of nextEntries) {
+      state.pages.set(route, {
+        entry,
+        ...(state.pages.get(route)?.page ? { page: state.pages.get(route)?.page } : {}),
+      });
+    }
+
+    return invalidatePages(state.incremental, nextEntries.keys());
+  };
+
   const rebuildPage = async (route: string, resourcesOnly = false) => {
     const existing = state.incremental.rebuildingPages.get(route);
 
@@ -450,6 +508,19 @@ export const startDev = async (options: StartDevOptions = {}) => {
         }
 
         const affected = new Set(paths.flatMap((path) => [...invalidateDependency(state.incremental, path)]));
+        const dynamicRouteDataChanged =
+          paths.some((path) => path.endsWith(".js")) &&
+          [...affected].some((route) => state.pages.get(route)?.entry.routeContext);
+
+        if (dynamicRouteDataChanged) {
+          const refreshed = await refreshDynamicRoutes(affected);
+          const active = [...refreshed].filter((route) => state.activePages.has(route));
+
+          await Promise.all(active.map((route) => rebuildPage(route)));
+          liveReload.broadcast("reload");
+
+          return;
+        }
 
         if (!affected.size && !deletedPageRoutes.length && paths.some((path) => path.endsWith(".html"))) {
           await rebuildProject();

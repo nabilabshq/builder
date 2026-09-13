@@ -5,6 +5,7 @@ import { ComponentRegistry, createGlobalComponentRegistry, createHybridComponent
 import { loadConfig } from "@/config";
 import { discoverPages, localComponentPaths } from "@/routing";
 import { routeDataFor } from "@/routing/dynamic/data";
+import { expandDynamicPage } from "@/routing/dynamic/expand";
 import { dynamicSegmentsFor } from "@/routing/dynamic/segments";
 import type { ParsedRouteRecord } from "@/routing/dynamic/types";
 import type { Component, NabiConfig, SharedDependencyType } from "@/types";
@@ -29,11 +30,45 @@ type FindProjectRootOptions = { filePath: string; workspaceRoots: string[] };
 
 type WorkspaceFolder = string | { uri: string };
 type CreateProjectManager = { workspaceFolders?: WorkspaceFolder[] };
+type RouteInterpolation = { booleanPaths: string[]; paths: string[] };
 
 const VARIABLE = /{{([\w:-]+)}}/g;
 const IGNORED_VARIABLES = new Set(["children", "slot"]);
+const INTERPOLATION_KEY = /^[\w-]+$/;
 
 const toPosix = (path: string) => path.replaceAll("\\", "/");
+
+const interpolationPathsFor = (value: unknown, prefix = ""): string[] => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return prefix ? [prefix] : [];
+  }
+
+  return Object.entries(value).flatMap(([name, property]) => {
+    if (!INTERPOLATION_KEY.test(name)) return [];
+
+    const path = [prefix, name].filter(Boolean).join(".");
+
+    return [path, ...interpolationPathsFor(property, path)];
+  });
+};
+
+const interpolationBooleanPathsFor = (value: unknown, prefix = ""): string[] => {
+  if (typeof value === "boolean") {
+    return prefix ? [prefix] : [];
+  }
+
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+
+  return Object.entries(value).flatMap(([name, property]) => {
+    if (!INTERPOLATION_KEY.test(name)) return [];
+
+    const path = [prefix, name].filter(Boolean).join(".");
+
+    return interpolationBooleanPathsFor(property, path);
+  });
+};
 
 export const pathFromUri = (uri: string) => fileURLToPath(uri);
 export const uriFromPath = (path: string) => pathToFileURL(path).href;
@@ -111,6 +146,7 @@ export class ProjectContext {
   readonly root: string;
   readonly config: NabiConfig;
   readonly registries = new Map<string, ComponentRegistry>();
+  readonly routeInterpolationCache = new Map<string, Promise<RouteInterpolation>>();
   readonly sharedFiles = new Map<DependencyType, SharedFile[]>();
   globalComponents?: Map<string, Component>;
   routeDiscovery?: Promise<void>;
@@ -214,6 +250,57 @@ export class ProjectContext {
     );
 
     return Object.fromEntries(records);
+  }
+
+  async routeInterpolation(filePath: string) {
+    const existing = this.routeInterpolationCache.get(filePath);
+
+    if (existing) return existing;
+
+    const paths = (async () => {
+      const pages = await expandDynamicPage({
+        dataPath: this.config.dataPath,
+        path: filePath,
+        rootPath: this.config.pagesPath,
+        routeConfigCache: new Map(),
+        routeDataCache: new Map(),
+        routeFileName: this.config.routeFileName,
+        routeHookCache: new Map(),
+      });
+
+      if (!pages) {
+        return {
+          booleanPaths: [],
+          paths: [],
+        };
+      }
+
+      const booleanPaths = new Set<string>();
+      const paths = new Set<string>();
+
+      for (const page of pages) {
+        for (const [name, value] of Object.entries(page.routeData)) {
+          paths.add(name);
+
+          for (const path of interpolationPathsFor(value)) {
+            paths.add(`${name}.${path}`);
+          }
+
+          for (const path of interpolationBooleanPathsFor(value, name)) {
+            booleanPaths.add(path);
+          }
+        }
+      }
+
+      return {
+        booleanPaths: [...booleanPaths].sort((left, right) => left.localeCompare(right)),
+        paths: [...paths].sort((left, right) => left.localeCompare(right)),
+      };
+    })();
+
+    this.routeInterpolationCache.set(filePath, paths);
+
+    return paths;
   }
 
   async routeDataPaths(): Promise<RouteDataFile[]> {

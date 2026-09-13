@@ -28,6 +28,13 @@ type CreatePageEntryProps = {
   routeContext?: PageEntry["routeContext"];
   routeData?: PageEntry["routeData"];
 };
+type DynamicPageEntriesProps = {
+  baseRoute?: string;
+  dataPath: string;
+  path: string;
+  rootPath: string;
+  routeFileName: string;
+};
 
 const relativeToCwd = ({ cwd, path }: { cwd: string; path: string }) => toPosix(relative(cwd, path));
 
@@ -61,6 +68,35 @@ export const createPageEntry = async (props: CreatePageEntryProps): Promise<Page
     scriptPath: fileName === "index.html" ? resolve(dirname(path), "script.js") : path.replace(/\.html$/i, ".js"),
     stylePath: fileName === "index.html" ? resolve(dirname(path), "style.css") : path.replace(/\.html$/i, ".css"),
   };
+};
+
+export const dynamicPageEntries = async (props: DynamicPageEntriesProps) => {
+  const { baseRoute = "", dataPath, path, rootPath, routeFileName } = props;
+
+  const pages = await expandDynamicPage({
+    dataPath,
+    path,
+    rootPath,
+    routeConfigCache: new Map(),
+    routeDataCache: new Map(),
+    routeFileName,
+    routeHookCache: new Map(),
+  });
+
+  if (!pages) return [];
+
+  return Promise.all(
+    pages.map(({ context, route, routeData }) =>
+      createPageEntry({
+        path,
+        publicRoute: mergeRouteSegments(baseRoute, route),
+        rootPath,
+        route,
+        routeContext: context,
+        routeData,
+      }),
+    ),
+  );
 };
 
 export const discoverPages = async (props: DiscoverPagesOptions): Promise<PageEntry[]> => {
