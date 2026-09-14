@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import chokidar from "chokidar";
 
+import { createBuildProgressRenderer } from "@/build/progress";
 import { build, clean } from "@/builder";
 import { startDev } from "@/dev";
 import type { BuildMode } from "@/types";
@@ -170,7 +171,20 @@ const run = async () => {
     console.log("\nBuilding project...");
 
     const startedAt = performance.now();
-    const result = await build({ mode });
+    const progress = createBuildProgressRenderer();
+    let result: Awaited<ReturnType<typeof build>>;
+
+    try {
+      progress.discovering();
+      result = await build({
+        mode,
+        onBuildStarted: progress.begin,
+        onOutputStage: progress.output,
+        onPageBuilt: progress.update,
+      });
+    } finally {
+      progress.finish();
+    }
 
     return printBuild({ ...result, duration: performance.now() - startedAt });
   }

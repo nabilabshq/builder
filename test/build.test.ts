@@ -55,7 +55,51 @@ test("split build emits page-owned CSS, JS, assets, and manifest", async () => {
 
     const manifest = JSON.parse(await readFile(join(root, "dist/manifest.json"), "utf8"));
 
+    assert.deepEqual(Object.keys(manifest), ["index.html", "dashboard/index.html"]);
     assert.deepEqual(manifest["index.html"], { css: ["style.css"], js: ["script.js"] });
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("build reports output stages", async () => {
+  const root = await project({ "src/pages/index.html": "<html><body>Home</body></html>" });
+
+  try {
+    const stages: string[] = [];
+
+    await build({ cwd: root, onOutputStage: (stage) => stages.push(stage) });
+    assert.deepEqual(stages, ["writing", "replacing"]);
+
+    stages.length = 0;
+    await build({ cwd: root, onOutputStage: (stage) => stages.push(stage) });
+    assert.deepEqual(stages, ["writing", "replacing", "cleaning"]);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("build reports its initial and completed page progress", async () => {
+  const root = await project({
+    "src/pages/about/index.html": "<html><body>About</body></html>",
+    "src/pages/index.html": "<html><body>Home</body></html>",
+  });
+
+  try {
+    const progress: { completed: number; total: number }[] = [];
+
+    await build({
+      cwd: root,
+      onBuildStarted: (value) => progress.push(value),
+      onPageBuilt: (value) => progress.push(value),
+      write: false,
+    });
+
+    assert.deepEqual(progress, [
+      { completed: 0, total: 2 },
+      { completed: 1, total: 2 },
+      { completed: 2, total: 2 },
+    ]);
   } finally {
     await rm(root, { force: true, recursive: true });
   }

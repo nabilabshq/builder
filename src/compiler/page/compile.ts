@@ -2,7 +2,7 @@ import type { Component } from "@/types";
 import type { HtmlNode } from "@/utils/html";
 import { serializeHtml } from "@/utils/html";
 
-import { conditionalChildren, isHtmlElse } from "./conditional";
+import { conditionalChildren, isDeferredRouteCondition, isHtmlElse } from "./conditional";
 import { componentError } from "./errors";
 import {
   attributeValue,
@@ -131,6 +131,12 @@ const compileNodes = (nodes: HtmlNode[], state: CompilationState) => {
   const result: HtmlNode[] = [];
 
   for (const node of nodes) {
+    if (isDeferredRouteCondition({ node, state })) {
+      state.onDeferredRouteCondition?.();
+      result.push(node);
+      continue;
+    }
+
     if (isHtmlElse(node)) {
       throw componentError("<else> must be a direct child of <if>.", state, node);
     }
@@ -158,7 +164,15 @@ const compileNodes = (nodes: HtmlNode[], state: CompilationState) => {
 };
 
 export const compilePage = async (props: CompilePageOptions) => {
-  const { cssModuleClasses = new Map(), onComponentResolved, page = "page.html", registry, source } = props;
+  const {
+    cssModuleClasses = new Map(),
+    deferRouteConditions = false,
+    onComponentResolved,
+    onDeferredRouteCondition,
+    page = "page.html",
+    registry,
+    source,
+  } = props;
 
   const normalisedSource = normaliseCompactTags(source);
   const document = parseDocument(normalisedSource);
@@ -167,8 +181,10 @@ export const compilePage = async (props: CompilePageOptions) => {
 
   const head = findHead(document);
   const state: CompilationState = {
+    deferRouteConditions,
     headNodes: [],
     onComponentResolved,
+    onDeferredRouteCondition,
     owner: undefined,
     page,
     registry,

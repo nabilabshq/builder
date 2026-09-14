@@ -4,10 +4,11 @@ import { createServer } from "node:http";
 import { basename, extname, join, relative } from "node:path";
 
 import { writeDevPage } from "@/build/output";
-import { build, buildDevPage, discoverPages } from "@/builder";
+import { buildDevPage, discoverPages } from "@/builder";
 import { loadConfig } from "@/config";
 import { dynamicPageEntries, errorPageFor, requestRoute } from "@/routing";
-import type { BuiltPage, NabiConfig, NabiConfigInput } from "@/types";
+import { routeHookDependencies } from "@/routing/dynamic/hooks";
+import type { BuiltPage, NabiConfig, NabiConfigInput, PageEntry } from "@/types";
 import { formatError } from "@/utils/errors";
 import { remove } from "@/utils/files";
 import { inside } from "@/utils/paths";
@@ -38,11 +39,6 @@ type ServeFileProps = {
   status?: number;
 };
 
-type BuildDevProjectProps = {
-  buildConfig: NabiConfigInput;
-  config: NabiConfig;
-};
-
 const contentTypes: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -57,7 +53,26 @@ const contentTypes: Record<string, string> = {
 
 const displayDuration = (milliseconds: number) => `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)}s`;
 
-const indexPages = (pages: BuiltPage[]) => new Map(pages.map((page) => [page.publicRoute, { entry: page, page }]));
+const indexEntries = (entries: PageEntry[]) => new Map(entries.map((entry) => [entry.publicRoute, { entry }]));
+
+const dynamicRouteDependenciesFor = async ({ config, entries }: { config: NabiConfig; entries: PageEntry[] }) => {
+  const paths = new Set(entries.filter((entry) => entry.routeContext).map((entry) => entry.path));
+  const newSet = async (pagePath: string) =>
+    new Set(
+      await routeHookDependencies({
+        pagePath,
+        pagesPath: config.pagesPath,
+        routeFileName: config.routeFileName,
+        sourcePath: config.srcPath,
+      }),
+    );
+
+  const dependencies: [string, Set<string>][] = await Promise.all(
+    [...paths].map(async (pagePath) => [pagePath, await newSet(pagePath)]),
+  );
+
+  return new Map(dependencies);
+};
 
 const builtPages = (pages: DevServerState["pages"]) => {
   return new Map([...pages].flatMap(([route, value]) => (value.page ? [[route, value.page] as const] : [])));
@@ -72,15 +87,6 @@ const isRouteStructurePath = (config: NabiConfig, path: string) => {
     inside(config.dataPath, path) || name === `${config.routeFileName}.json` || name === `${config.routeFileName}.js`
   );
 };
-
-const buildDevProject = ({ buildConfig, config }: BuildDevProjectProps) =>
-  build({
-    atomic: false,
-    config: buildConfig,
-    copyAssets: false,
-    cwd: config.cwd,
-    mode: "split",
-  });
 
 const serveFile = async ({ path, request, response, status = 200 }: ServeFileProps) => {
   try {
@@ -237,14 +243,18 @@ export const startDev = async (options: StartDevOptions = {}) => {
   let config = await loadConfig({ config: buildConfig, cwd });
   const configPath = join(config.cwd, "nabi.config.js");
 
-  console.log("Building project...");
+  console.log("Discovering project routes...");
 
-  const buildStartedAt = performance.now();
-  let initialBuild: Awaited<ReturnType<typeof buildDevProject>> | undefined;
+  const discoveryStartedAt = performance.now();
+  let initialEntries: PageEntry[] = [];
+  let dynamicRouteDependencies = new Map<string, Set<string>>();
 
   try {
-    initialBuild = await buildDevProject({ buildConfig, config });
-    console.log(`Built ${initialBuild.pages.length} pages in ${displayDuration(performance.now() - buildStartedAt)}.`);
+    initialEntries = await discoverPages(config);
+    dynamicRouteDependencies = await dynamicRouteDependenciesFor({ config, entries: initialEntries });
+    console.log(
+      `Discovered ${initialEntries.length} routes in ${displayDuration(performance.now() - discoveryStartedAt)}.`,
+    );
   } catch (error) {
     console.error(formatError(error));
   }
@@ -252,8 +262,8 @@ export const startDev = async (options: StartDevOptions = {}) => {
   const state: DevServerState = {
     activePages: new Map(),
     errorPages: new Map(),
-    incremental: createIncrementalBuildState(initialBuild?.pages ?? []),
-    pages: indexPages(initialBuild?.pages ?? []),
+    incremental: createIncrementalBuildState([]),
+    pages: indexEntries(initialEntries),
   };
 
   let projectRebuild: Promise<void> | undefined;
@@ -265,12 +275,13 @@ export const startDev = async (options: StartDevOptions = {}) => {
       const startedAt = performance.now();
 
       config = await loadConfig({ config: buildConfig, cwd });
-      const result = await buildDevProject({ buildConfig, config });
+      const entries = await discoverPages(config);
 
-      state.pages = indexPages(result.pages);
+      dynamicRouteDependencies = await dynamicRouteDependenciesFor({ config, entries });
+      state.pages = indexEntries(entries);
       state.errorPages.clear();
-      state.incremental = createIncrementalBuildState(result.pages);
-      console.log(`Built ${result.pages.length} pages in ${displayDuration(performance.now() - startedAt)}.`);
+      state.incremental = createIncrementalBuildState([]);
+      console.log(`Discovered ${entries.length} routes in ${displayDuration(performance.now() - startedAt)}.`);
     })();
 
     try {
@@ -335,6 +346,12 @@ export const startDev = async (options: StartDevOptions = {}) => {
       });
     }
 
+    const dependencies = await dynamicRouteDependenciesFor({ config, entries });
+
+    for (const [path, value] of dependencies) {
+      dynamicRouteDependencies.set(path, value);
+    }
+
     return invalidatePages(state.incremental, nextEntries.keys());
   };
 
@@ -342,6 +359,10 @@ export const startDev = async (options: StartDevOptions = {}) => {
     const existing = state.incremental.rebuildingPages.get(route);
 
     if (existing) return existing;
+
+    if (!state.incremental.dirtyPages.has(route)) {
+      invalidatePages(state.incremental, [route]);
+    }
 
     const rebuilding = (async () => {
       const startedAt = performance.now();
@@ -467,6 +488,10 @@ export const startDev = async (options: StartDevOptions = {}) => {
           await remove(join(config.outPath, page.entry.outputPath));
         }
 
+        const deletedPaths = new Set(
+          changes.filter((change) => change.event === "unlink").map((change) => change.path),
+        );
+
         if (paths.some((path) => isRouteStructurePath(config, path))) {
           const entries = await discoverPages(config);
           const previousPages = state.pages;
@@ -507,13 +532,37 @@ export const startDev = async (options: StartDevOptions = {}) => {
           return;
         }
 
-        const affected = new Set(paths.flatMap((path) => [...invalidateDependency(state.incremental, path)]));
-        const dynamicRouteDataChanged =
-          paths.some((path) => path.endsWith(".js")) &&
-          [...affected].some((route) => state.pages.get(route)?.entry.routeContext);
+        const affected = new Set([
+          ...paths.flatMap((path) => [...invalidateDependency(state.incremental, path)]),
+          ...paths.flatMap((path) => {
+            if (deletedPaths.has(path)) return [];
+
+            return [...state.pages].filter(([, page]) => page.entry.path === path).map(([route]) => route);
+          }),
+        ]);
+
+        const dynamicSources = new Set(
+          paths.flatMap((path) =>
+            [...dynamicRouteDependencies]
+              .filter(([, dependencies]) => dependencies.has(path))
+              .map(([sourcePath]) => sourcePath),
+          ),
+        );
+
+        const dynamicRoutes = [...state.pages].flatMap(([route, page]) => {
+          if (!page.entry.routeContext) return [];
+
+          if (dynamicSources.size && !dynamicSources.has(page.entry.path)) {
+            return [];
+          }
+
+          return dynamicSources.size || affected.has(route) ? [route] : [];
+        });
+
+        const dynamicRouteDataChanged = paths.some((path) => path.endsWith(".js")) && dynamicRoutes.length;
 
         if (dynamicRouteDataChanged) {
-          const refreshed = await refreshDynamicRoutes(affected);
+          const refreshed = await refreshDynamicRoutes(dynamicRoutes);
           const active = [...refreshed].filter((route) => state.activePages.has(route));
 
           await Promise.all(active.map((route) => rebuildPage(route)));

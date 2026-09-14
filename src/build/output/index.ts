@@ -8,19 +8,22 @@ import { writeHybridBuild } from "./write";
 
 export { writeDevPage } from "./write";
 
-export const writeBuild = async ({ atomic = true, config, copyAssets = true, mode, pages }: BuildWriteOptions) => {
+export const writeBuild = async (props: BuildWriteOptions) => {
+  const { atomic = true, config, copyAssets = true, mode, onStage, pages } = props;
+
   const temporary = temporaryPath(config);
 
   await remove(temporary);
   await mkdir(temporary, { recursive: true });
 
   try {
+    onStage?.("writing");
     await writeHybridBuild({ config, copyAssets, mode, pages, temporary });
 
     if (atomic) {
-      await replaceOutput(config, temporary);
+      await replaceOutput(config, temporary, onStage);
     } else {
-      await syncOutput(config, temporary);
+      await syncOutput(config, temporary, onStage);
     }
   } catch (error) {
     await remove(temporary);

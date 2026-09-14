@@ -1,4 +1,5 @@
 import { writeBuild } from "@/build/output";
+import type { BuildOutputStage } from "@/build/types";
 import { cssModuleClassNames, cssModulePathsFor } from "@/compiler/css-modules";
 import { resolveSharedDependencies, rewriteAssetReferences, rewriteInternalLinks } from "@/compiler/dependencies";
 import { compilePage } from "@/compiler/page";
@@ -7,7 +8,16 @@ import { collectHybridResources } from "@/compiler/resources";
 import { loadConfig } from "@/config";
 import { discoverErrorPages, discoverPages as discoverPageRoutes, interpolateRouteData } from "@/routing";
 import { routeHookDependencies } from "@/routing/dynamic/hooks";
-import type { BuildMode, BuiltPage, Component, NabiConfig, NabiConfigInput, PageEntry } from "@/types";
+import type {
+  BuildMode,
+  BuiltPage,
+  Component,
+  NabiConfig,
+  NabiConfigInput,
+  PageEntry,
+  PageResources,
+  SharedDependencies,
+} from "@/types";
 import { NabiError } from "@/utils/errors";
 import { readText, remove } from "@/utils/files";
 import { isBuildMode } from "@/utils/paths";
@@ -17,6 +27,17 @@ type CssModuleData = {
   paths: string[];
 };
 type CssModuleCache = Map<string, Promise<CssModuleData>>;
+type ComponentRegistryCache = Map<string, Promise<ComponentRegistry>>;
+type PageTemplateCache = Map<string, Promise<PageTemplate>>;
+type RouteHookDependenciesCache = Map<string, Promise<string[]>>;
+type PageTemplate = {
+  components: Component[];
+  dependencies?: SharedDependencies;
+  hasDeferredRouteConditions: boolean;
+  hasRouteDependentLinks: boolean;
+  html: string;
+  resources?: PageResources;
+};
 type CssModulesForOptions = {
   cache: CssModuleCache;
   path: string;
@@ -27,12 +48,33 @@ type LoadCssModulesOptions = {
   components: Map<string, Component>;
   sourcePath: string;
 };
+type RegistryForOptions = {
+  cache: ComponentRegistryCache;
+  config: NabiConfig;
+  entry: PageEntry;
+  globalComponents: Map<string, Component>;
+  ignoredComponentPaths: string[];
+};
+type DependenciesForRouteHookOptions = {
+  cache: RouteHookDependenciesCache;
+  config: NabiConfig;
+  entry: PageEntry;
+};
+type PageTemplateForOptions = {
+  cache: PageTemplateCache;
+  config: NabiConfig;
+  cssModuleCache: CssModuleCache;
+  entry: PageEntry;
+  registry: ComponentRegistry;
+};
 
 type BuildPageOptions = {
   config: NabiConfig;
   cssModuleCache: CssModuleCache;
   entry: PageEntry;
   registry: ComponentRegistry;
+  routeHookDependenciesCache?: RouteHookDependenciesCache;
+  template?: PageTemplate;
 };
 type BuildOptions = {
   atomic?: boolean;
@@ -40,7 +82,16 @@ type BuildOptions = {
   copyAssets?: boolean;
   cwd?: string;
   mode?: BuildMode;
+  onBuildStarted?: (progress: BuildProgress) => void;
+  onOutputStage?: (stage: BuildOutputStage) => void;
+  onOutputWriting?: () => void;
+  onPageBuilt?: (progress: BuildProgress) => void;
   write?: boolean;
+};
+
+export type BuildProgress = {
+  completed: number;
+  total: number;
 };
 
 type CleanOptions = {
@@ -86,11 +137,114 @@ const loadComponentCssModules = async ({ cache, components, sourcePath }: LoadCs
   );
 };
 
-const buildPage = async ({ config, cssModuleCache, entry, registry }: BuildPageOptions): Promise<BuiltPage> => {
+const componentRegistryKey = (entry: PageEntry) => entry.localComponentPaths.join("\0");
+
+const registryFor = (props: RegistryForOptions) => {
+  const { cache, config, entry, globalComponents, ignoredComponentPaths } = props;
+  const key = componentRegistryKey(entry);
+  const existing = cache.get(key);
+
+  if (existing) return existing;
+
+  const registry = createHybridComponentRegistry({
+    globalComponents,
+    ignoredPaths: ignoredComponentPaths,
+    localComponentPaths: entry.localComponentPaths,
+    pagesDir: config.pagesDir,
+    reservedSourceDirectories: [config.pagesDir, config.sharedDir],
+    sourcePath: config.srcPath,
+  });
+
+  cache.set(key, registry);
+
+  return registry;
+};
+
+const dependenciesForRouteHook = (props: DependenciesForRouteHookOptions) => {
+  const { cache, config, entry } = props;
+  const existing = cache.get(entry.path);
+
+  if (existing) return existing;
+
+  const dependencies = routeHookDependencies({
+    pagePath: entry.path,
+    pagesPath: config.pagesPath,
+    routeFileName: config.routeFileName,
+    sourcePath: config.srcPath,
+  });
+
+  cache.set(entry.path, dependencies);
+
+  return dependencies;
+};
+
+const pageTemplateFor = (props: PageTemplateForOptions) => {
+  const { cache, config, cssModuleCache, entry, registry } = props;
+  const existing = cache.get(entry.path);
+
+  if (existing) return existing;
+
+  const template = (async (): Promise<PageTemplate> => {
+    const pageModules = await cssModulesFor({
+      cache: cssModuleCache,
+      path: entry.path,
+      sourcePath: config.srcPath,
+    });
+    const components: Component[] = [];
+    let hasDeferredRouteConditions = false;
+    const compiled = await compilePage({
+      cssModuleClasses: pageModules.classes,
+      deferRouteConditions: true,
+      onComponentResolved: (component) => components.push(component),
+      onDeferredRouteCondition: () => {
+        hasDeferredRouteConditions = true;
+      },
+      page: entry.path,
+      registry,
+      source: await readText(entry.path),
+    });
+
+    const resources = hasDeferredRouteConditions
+      ? undefined
+      : await collectHybridResources({
+          components,
+          pageModulePaths: pageModules.paths,
+          pagePath: entry.path,
+          scriptPath: entry.scriptPath,
+          stylePath: entry.stylePath,
+        });
+    const canReuseTransforms = !hasDeferredRouteConditions;
+    const hasDynamicAssetReference = /@assets\/[^"'\s>]*{{:/.test(compiled);
+    const hasDynamicSharedDependency = /\buse="[^">]*{{:/.test(compiled);
+    const hasRouteDependentLinks = /\bhref="(?:\.\/|\.\.\/)/.test(compiled);
+    const assetHtml =
+      !canReuseTransforms || hasDynamicAssetReference ? compiled : rewriteAssetReferences({ config, html: compiled });
+    const shared =
+      !canReuseTransforms || hasDynamicSharedDependency
+        ? undefined
+        : await resolveSharedDependencies({ config, html: assetHtml, page: entry.path });
+
+    return {
+      components,
+      dependencies: shared?.dependencies,
+      hasDeferredRouteConditions,
+      hasRouteDependentLinks,
+      html: shared?.html ?? assetHtml,
+      resources,
+    };
+  })();
+
+  cache.set(entry.path, template);
+
+  return template;
+};
+
+const buildPage = async (props: BuildPageOptions): Promise<BuiltPage> => {
+  const { config, cssModuleCache, entry, registry, routeHookDependenciesCache, template } = props;
   const source = interpolateRouteData({
     routeContext: entry.routeContext,
     routeData: entry.routeData,
-    source: await readText(entry.path),
+    source: template?.html ?? (await readText(entry.path)),
   });
 
   const pageModules = await cssModulesFor({
@@ -99,36 +253,45 @@ const buildPage = async ({ config, cssModuleCache, entry, registry }: BuildPageO
     sourcePath: config.srcPath,
   });
 
-  const resolvedComponents: Component[] = [];
+  const resolvedComponents = [...(template?.components ?? [])];
+  const compiled =
+    template && !template.hasDeferredRouteConditions
+      ? source
+      : await compilePage({
+          cssModuleClasses: pageModules.classes,
+          onComponentResolved: (component) => resolvedComponents.push(component),
+          page: entry.path,
+          registry,
+          source,
+        });
 
-  const compiled = await compilePage({
-    cssModuleClasses: pageModules.classes,
-    onComponentResolved: (component) => resolvedComponents.push(component),
-    page: entry.path,
-    registry,
-    source,
-  });
+  const assetHtml = template?.dependencies ? compiled : rewriteAssetReferences({ config, html: compiled });
+  const linkedHtml =
+    template && !template.hasRouteDependentLinks
+      ? assetHtml
+      : rewriteInternalLinks({
+          config,
+          html: assetHtml,
+          pageRoute: entry.publicRoute,
+        });
+  const shared = template?.dependencies
+    ? { dependencies: template.dependencies, html: linkedHtml }
+    : await resolveSharedDependencies({
+        config,
+        html: linkedHtml,
+        page: entry.path,
+      });
+  const { dependencies, html } = shared;
 
-  const assetHtml = rewriteAssetReferences({ config, html: compiled });
-  const linkedHtml = rewriteInternalLinks({
-    config,
-    html: assetHtml,
-    pageRoute: entry.publicRoute,
-  });
-
-  const { dependencies, html } = await resolveSharedDependencies({
-    config,
-    html: linkedHtml,
-    page: entry.path,
-  });
-
-  const resources = await collectHybridResources({
-    components: resolvedComponents,
-    pageModulePaths: pageModules.paths,
-    pagePath: entry.path,
-    scriptPath: entry.scriptPath,
-    stylePath: entry.stylePath,
-  });
+  const resources =
+    template?.resources ??
+    (await collectHybridResources({
+      components: resolvedComponents,
+      pageModulePaths: pageModules.paths,
+      pagePath: entry.path,
+      scriptPath: entry.scriptPath,
+      stylePath: entry.stylePath,
+    }));
 
   const sourceDependencies = [
     entry.path,
@@ -146,12 +309,14 @@ const buildPage = async ({ config, cssModuleCache, entry, registry }: BuildPageO
     ...resources.js,
     ...dependencies.scripts,
     ...dependencies.styles,
-    ...(await routeHookDependencies({
-      pagePath: entry.path,
-      pagesPath: config.pagesPath,
-      routeFileName: config.routeFileName,
-      sourcePath: config.srcPath,
-    })),
+    ...(routeHookDependenciesCache
+      ? await dependenciesForRouteHook({ cache: routeHookDependenciesCache, config, entry })
+      : await routeHookDependencies({
+          pagePath: entry.path,
+          pagesPath: config.pagesPath,
+          routeFileName: config.routeFileName,
+          sourcePath: config.srcPath,
+        })),
   ];
 
   return {
@@ -226,7 +391,18 @@ const discoverErrors = async (config: NabiConfig) =>
   });
 
 export const build = async (props: BuildOptions = {}) => {
-  const { atomic = true, config: configOverrides, copyAssets = true, cwd, mode, write = true } = props;
+  const {
+    atomic = true,
+    config: configOverrides,
+    copyAssets = true,
+    cwd,
+    mode,
+    onBuildStarted,
+    onOutputStage,
+    onOutputWriting,
+    onPageBuilt,
+    write = true,
+  } = props;
 
   const config = await loadConfig({ config: configOverrides, cwd });
   const buildMode = mode ?? config.defaultBuildMode;
@@ -244,8 +420,14 @@ export const build = async (props: BuildOptions = {}) => {
 
   const pages: BuiltPage[] = [];
   const errorPages: BuiltPage[] = [];
+  const totalPages = entries.length + errorEntries.length;
   const cssModuleCache: CssModuleCache = new Map();
+  const componentRegistryCache: ComponentRegistryCache = new Map();
+  const pageTemplateCache: PageTemplateCache = new Map();
   const ignoredComponentPaths: string[] = [config.pagesPath, config.sharedPath];
+  const routeHookDependenciesCache: RouteHookDependenciesCache = new Map();
+
+  onBuildStarted?.({ completed: 0, total: totalPages });
 
   const globalComponents = await createGlobalComponentRegistry({
     ignoredPaths: ignoredComponentPaths,
@@ -265,13 +447,12 @@ export const build = async (props: BuildOptions = {}) => {
     ...entries.map((entry) => [entry, false] as const),
     ...errorEntries.map((entry) => [entry, true] as const),
   ]) {
-    const registry = await createHybridComponentRegistry({
+    const registry = await registryFor({
+      cache: componentRegistryCache,
+      config,
+      entry,
       globalComponents,
-      ignoredPaths: ignoredComponentPaths,
-      localComponentPaths: entry.localComponentPaths,
-      pagesDir: config.pagesDir,
-      reservedSourceDirectories: [config.pagesDir, config.sharedDir],
-      sourcePath: config.srcPath,
+      ignoredComponentPaths,
     });
 
     await loadComponentCssModules({
@@ -289,17 +470,32 @@ export const build = async (props: BuildOptions = {}) => {
       cssModuleCache,
       entry,
       registry,
+      routeHookDependenciesCache,
+      ...(entry.routeData
+        ? {
+            template: await pageTemplateFor({
+              cache: pageTemplateCache,
+              config,
+              cssModuleCache,
+              entry,
+              registry,
+            }),
+          }
+        : {}),
     });
 
     (isErrorPage ? errorPages : pages).push(page);
+    onPageBuilt?.({ completed: pages.length + errorPages.length, total: totalPages });
   }
 
   if (write) {
+    onOutputWriting?.();
     await writeBuild({
       atomic,
       config,
       copyAssets,
       mode: buildMode,
+      onStage: onOutputStage,
       pages: [...pages, ...errorPages],
     });
   }

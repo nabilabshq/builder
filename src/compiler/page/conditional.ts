@@ -41,6 +41,9 @@ const conditionFor = ({ node, state }: ConditionalChildrenProps) => {
 
 export const isHtmlElse = (node: HtmlNode) => isHtmlElement(node, "else");
 
+export const isDeferredRouteCondition = ({ node, state }: ConditionalChildrenProps) =>
+  state.deferRouteConditions && isHtmlIf(node) && unresolvedRouteValue.test(attributeValue(node, "when") ?? "");
+
 export const conditionalChildren = (props: ConditionalChildrenProps): HtmlNode[] | undefined => {
   const { node, state } = props;
 

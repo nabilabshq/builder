@@ -6,9 +6,11 @@ import type { NabiConfig, SharedDependencies, SharedDependencyType } from "@/typ
 import type { HtmlNode } from "@/utils/html";
 import { parseDocument, serializeHtml } from "@/utils/html";
 
-import { sourcePathFromProject } from "./resources";
+import { sourcePathFromProject } from "../resources";
 
 type SharedSource = { path: string; source: string };
+export type SharedSourceCache = Map<string, Promise<SharedSource>>;
+
 type SharedSourceUrlProps = {
   baseRoute: string;
   directory: string;
@@ -17,6 +19,7 @@ type SharedSourceUrlProps = {
 };
 
 type ReadSharedSourcesProps = {
+  cache: SharedSourceCache;
   config: NabiConfig;
   directory: string;
   paths: string[];
@@ -34,6 +37,7 @@ type InlineSourceProps = {
 
 type InlineSharedDependenciesProps = {
   annotate: boolean;
+  cache: SharedSourceCache;
   config: NabiConfig;
   dependencies: SharedDependencies;
   html: string;
@@ -54,16 +58,6 @@ type SharedSourceDefinition = {
   element: InlineSharedElement;
   root: (config: NabiConfig) => string;
   type: SharedDependencyType;
-};
-
-const findElement = (node: HtmlNode, tagName: string): HtmlNode | undefined => {
-  if (node.tagName === tagName) return node;
-
-  for (const child of node.childNodes ?? []) {
-    const found = findElement(child, tagName);
-
-    if (found) return found;
-  }
 };
 
 const attribute = (node: HtmlNode, name: string) => node.attrs?.find((item) => item.name === name);
@@ -102,37 +96,29 @@ const sharedSourceDefinitions = [
   },
 ] satisfies SharedSourceDefinition[];
 
-const extractElements = (node: HtmlNode, tagName: string, predicate: (node: HtmlNode) => boolean = () => true) => {
-  const elements: HtmlNode[] = [];
+const sharedSourceUrl = (props: SharedSourceUrlProps) => {
+  const { baseRoute, directory, path, root } = props;
 
-  const visit = (current: HtmlNode) => {
-    const children: HtmlNode[] = [];
-
-    for (const child of current.childNodes ?? []) {
-      if (child.tagName === tagName && predicate(child)) {
-        elements.push(child);
-        continue;
-      }
-
-      visit(child);
-      children.push(child);
-    }
-
-    current.childNodes = children;
-  };
-
-  visit(node);
-
-  return elements;
+  return `/${[baseRoute, directory, relative(root, path).replaceAll("\\", "/")].filter(Boolean).join("/")}`;
 };
 
-const sharedSourceUrl = ({ baseRoute, directory, path, root }: SharedSourceUrlProps) =>
-  `/${[baseRoute, directory, relative(root, path).replaceAll("\\", "/")].filter(Boolean).join("/")}`;
+const readSharedSources = async (props: ReadSharedSourcesProps) => {
+  const { cache, config, directory, paths, root, transform } = props;
 
-const readSharedSources = async ({ config, directory, paths, root, transform }: ReadSharedSourcesProps) => {
   const entries = await Promise.all(
     [...new Set(paths)].map(async (path) => {
-      const source = await readFile(path, "utf8");
+      const existing = cache.get(path);
+
+      const source =
+        existing ??
+        (async () => ({
+          path: sourcePathFromProject({ config, path }),
+          source: await transform(await readFile(path, "utf8")),
+        }))();
+
+      if (!existing) {
+        cache.set(path, source);
+      }
 
       return [
         sharedSourceUrl({
@@ -141,10 +127,7 @@ const readSharedSources = async ({ config, directory, paths, root, transform }: 
           path,
           root,
         }),
-        {
-          path: sourcePathFromProject({ config, path }),
-          source: await transform(source),
-        },
+        await source,
       ] as const;
     }),
   );
@@ -152,7 +135,9 @@ const readSharedSources = async ({ config, directory, paths, root, transform }: 
   return new Map(entries);
 };
 
-const inlineSharedSource = ({ annotate, definition, node, rawBlock, sources }: InlineSourceProps) => {
+const inlineSharedSource = (props: InlineSourceProps) => {
+  const { annotate, definition, node, rawBlock, sources } = props;
+
   if (node.tagName !== definition.inputTagName) return;
 
   const sourceAttribute = attribute(node, definition.sourceAttribute);
@@ -164,7 +149,12 @@ const inlineSharedSource = ({ annotate, definition, node, rawBlock, sources }: I
   node.tagName = definition.outputTagName;
   node.attrs = (node.attrs ?? []).filter((item) => !definition.removedAttributes.includes(item.name));
 
-  if (annotate) node.attrs.push({ name: definition.annotationAttribute, value: source.path });
+  if (annotate) {
+    node.attrs.push({
+      name: definition.annotationAttribute,
+      value: source.path,
+    });
+  }
 
   node.childNodes = [
     {
@@ -177,7 +167,8 @@ const inlineSharedSource = ({ annotate, definition, node, rawBlock, sources }: I
 };
 
 export const inlineSharedDependencies = async (props: InlineSharedDependenciesProps) => {
-  const { annotate, config, dependencies, html, types } = props;
+  const { annotate, cache, config, dependencies, html, types } = props;
+
   const definitions = types
     ? sharedSourceDefinitions.filter((definition) => types.includes(definition.type))
     : sharedSourceDefinitions;
@@ -186,6 +177,7 @@ export const inlineSharedDependencies = async (props: InlineSharedDependenciesPr
     definitions.map(async (definition) => ({
       definition,
       sources: await readSharedSources({
+        cache,
         config,
         directory: definition.directory,
         paths: definition.dependencies(dependencies),
@@ -230,30 +222,7 @@ export const inlineSharedDependencies = async (props: InlineSharedDependenciesPr
 
   visit(document);
 
-  return rawBlocks.reduce((output, block) => output.replace(block.marker, block.value), serializeHtml(document));
-};
-
-export const bodyOutput = ({ config, html }: { config: NabiConfig; html: string }): string => {
-  const document = parseDocument(html);
-  const body = findElement(document, "body");
-  const styles = extractElements(document, "style");
-  const scripts = extractElements(document, "script").filter(
-    (script) => attribute(script, "type")?.value === "application/json",
-  );
-  const globalStylePath = `${sourcePathFromProject({ config, path: config.stylesPath })}/`;
-  const globalStyles: HtmlNode[] = [];
-  const componentStyles: HtmlNode[] = [];
-
-  for (const style of styles) {
-    if (attribute(style, "data-href")?.value.startsWith(globalStylePath)) {
-      globalStyles.push(style);
-    } else {
-      componentStyles.push(style);
-    }
-  }
-
-  return serializeHtml({
-    childNodes: [...globalStyles, ...componentStyles, ...(body?.childNodes ?? []), ...scripts],
-    nodeName: "#document-fragment",
-  });
+  return rawBlocks.reduce((output, block) => {
+    return output.replace(block.marker, block.value);
+  }, serializeHtml(document));
 };

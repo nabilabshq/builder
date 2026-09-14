@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -129,6 +129,36 @@ test("dev server serves compiled pages and injects live reload client", async ()
       assert.equal(await head.text(), "");
       assert.equal((await fetch(dev.url, { method: "POST" })).status, 405);
       assert.equal((await fetch(`${dev.url}/%E0%A4%A`)).status, 400);
+    } finally {
+      await dev.close();
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("dev server defers page builds until their routes are requested", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nabi-lazy-dev-"));
+
+  try {
+    const home = join(root, "src/pages/index.html");
+    const other = join(root, "src/pages/other/index.html");
+
+    await Promise.all([mkdir(dirname(home), { recursive: true }), mkdir(dirname(other), { recursive: true })]);
+    await Promise.all([
+      writeFile(home, "<html><body>Home</body></html>"),
+      writeFile(other, "<html><body>Other</body></html>"),
+    ]);
+
+    const dev = await startDev({ cwd: root, port: await findAvailablePort() });
+
+    try {
+      await assert.rejects(() => access(join(root, "dist/index.html")));
+      await assert.rejects(() => access(join(root, "dist/other/index.html")));
+
+      assert.match(await (await fetch(dev.url)).text(), /Home/);
+      await access(join(root, "dist/index.html"));
+      await assert.rejects(() => access(join(root, "dist/other/index.html")));
     } finally {
       await dev.close();
     }
@@ -367,6 +397,7 @@ test("dev server rebuilds and broadcasts CSS and full reload events", async () =
       await waitForSocketOpen(socket);
       socket.send("/");
       await new Promise((resolve) => setTimeout(resolve, 100));
+      await fetch(dev.url);
 
       const cssMessage = waitForSocketMessage(socket, "css");
 
@@ -415,6 +446,7 @@ test("dev server eagerly rebuilds active pages and lazily rebuilds inactive depe
       await waitForSocketOpen(socket);
       socket.send("/");
       await new Promise((resolve) => setTimeout(resolve, 50));
+      await fetch(dev.url);
 
       const reload = waitForSocketMessage(socket, "reload");
 
@@ -422,7 +454,7 @@ test("dev server eagerly rebuilds active pages and lazily rebuilds inactive depe
       await reload;
 
       assert.match(await (await fetch(dev.url)).text(), /Updated header/);
-      assert.match(await readFile(join(root, "dist/other/index.html"), "utf8"), /Initial header/);
+      await assert.rejects(() => access(join(root, "dist/other/index.html")));
       assert.match(await (await fetch(`${dev.url}/other`)).text(), /Updated header/);
     } finally {
       socket.close();
@@ -454,7 +486,7 @@ test("dev server invalidates only the page that changed", async () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       assert.match(await (await fetch(dev.url)).text(), /Home/);
-      assert.match(await readFile(join(root, "dist/about/index.html"), "utf8"), /Initial about/);
+      await assert.rejects(() => access(join(root, "dist/about/index.html")));
       assert.match(await (await fetch(`${dev.url}/about`)).text(), /Updated about/);
     } finally {
       await dev.close();

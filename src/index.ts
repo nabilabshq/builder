@@ -1,3 +1,5 @@
+export type { BuildOutputStage } from "@/build/types";
+export type { BuildProgress } from "@/builder";
 export { build, clean, discoverPages } from "@/builder";
 export { compilePage } from "@/compiler/page";
 export { defineConfig, loadConfig } from "@/config";
