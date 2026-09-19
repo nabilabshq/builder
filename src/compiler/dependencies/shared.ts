@@ -61,9 +61,13 @@ const sharedDependencyTags = {
 } satisfies Record<string, SharedDependencyTag>;
 
 const sharedDependencyTag = (node: HtmlNode): SharedDependencyTag | undefined => {
-  if (node.tagName === "link") return sharedDependencyTags.link;
+  if (node.tagName === "link") {
+    return sharedDependencyTags.link;
+  }
 
-  if (node.tagName === "script") return sharedDependencyTags.script;
+  if (node.tagName === "script") {
+    return sharedDependencyTags.script;
+  }
 };
 
 const attribute = (node: HtmlNode, name: string) => node.attrs?.find((item) => item.name === name);
@@ -75,7 +79,9 @@ const addAttribute = (node: HtmlNode, name: string, value: string) => {
 const removeAttribute = (node: HtmlNode, name: string) => {
   const index = node.attrs?.findIndex((item) => item.name === name) ?? -1;
 
-  if (index >= 0) node.attrs?.splice(index, 1);
+  if (index >= 0) {
+    node.attrs?.splice(index, 1);
+  }
 };
 
 const sharedPath = (label: string, root: string, value: string) => {
@@ -125,7 +131,12 @@ export const resolveSharedDependency = (props: ResolveSharedDependencyProps) => 
     },
   } satisfies Record<SharedDependencyType, SharedDependencyDefinition>;
 
-  return resolveSharedFile({ config, page, value, ...definitions[type] });
+  return resolveSharedFile({
+    config,
+    page,
+    value,
+    ...definitions[type],
+  });
 };
 
 const resolveSharedDependencyNode = async (props: ResolveSharedDependencyNodeProps) => {
@@ -172,7 +183,12 @@ export const resolveSharedDependencies = async (props: ResolveSharedDependencies
   const dependencies: SharedDependencies = { scripts: [], styles: [] };
 
   const visit = async (node: HtmlNode) => {
-    await resolveSharedDependencyNode({ config, dependencies, node, page });
+    await resolveSharedDependencyNode({
+      config,
+      dependencies,
+      node,
+      page,
+    });
 
     for (const child of node.childNodes ?? []) {
       await visit(child);

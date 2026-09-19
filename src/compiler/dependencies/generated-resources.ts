@@ -30,6 +30,7 @@ const element = (tagName: string, attrs: HtmlAttribute[] = [], childNodes: HtmlN
 
 export const injectGeneratedResources = (props: InjectGeneratedResourcesProps) => {
   const { css = [], cssSources = [], html, inline = false, js = [], jsSources = [] } = props;
+
   const document = parseDocument(html);
   const rawBlocks: { marker: string; value: string }[] = [];
 

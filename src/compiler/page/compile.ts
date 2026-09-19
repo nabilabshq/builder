@@ -115,7 +115,10 @@ const compileUse = (node: HtmlNode, state: CompilationState) => {
       props,
       slots: projectedSlots,
     }),
-    componentState({ component, state }),
+    componentState({
+      component,
+      state,
+    }),
   );
 
   if (component.isHeadTemplate) {

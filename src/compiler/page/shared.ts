@@ -23,7 +23,9 @@ const annotateTagNames = (node: HtmlNode, source: string) => {
     node.isSelfClosing = /\/\s*>$/.test(openingTag);
   }
 
-  for (const child of node.childNodes ?? []) annotateTagNames(child, source);
+  for (const child of node.childNodes ?? []) {
+    annotateTagNames(child, source);
+  }
 };
 
 export const parseDocument = (source: string) => {
@@ -60,9 +62,13 @@ export const rewriteCssModuleClasses = (nodes: HtmlNode[], classes: Map<string, 
   for (const node of nodes) {
     const className = node.attrs?.find((attribute) => attribute.name === "class");
 
-    if (className) className.value = className.value.replace(/[^\s]+/g, (name) => classes.get(name) ?? name);
+    if (className) {
+      className.value = className.value.replace(/[^\s]+/g, (name) => classes.get(name) ?? name);
+    }
 
-    if (node.childNodes) rewriteCssModuleClasses(node.childNodes, classes);
+    if (node.childNodes) {
+      rewriteCssModuleClasses(node.childNodes, classes);
+    }
   }
 };
 
@@ -80,5 +86,9 @@ export const locationFrom = (node: HtmlNode | undefined) => {
 export const sourceTag = (node: HtmlNode | undefined, source: string) => {
   const start = node?.sourceCodeLocation?.startTag;
 
-  return start ? source.slice(start.startOffset, start.endOffset) : `<${node?.rawTagName ?? node?.tagName ?? "use"}>`;
+  if (start) {
+    return source.slice(start.startOffset, start.endOffset);
+  } else {
+    return `<${node?.rawTagName ?? node?.tagName ?? "use"}>`;
+  }
 };

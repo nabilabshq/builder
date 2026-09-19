@@ -190,8 +190,10 @@ const pageTemplateFor = (props: PageTemplateForOptions) => {
       path: entry.path,
       sourcePath: config.srcPath,
     });
+
     const components: Component[] = [];
     let hasDeferredRouteConditions = false;
+
     const compiled = await compilePage({
       cssModuleClasses: pageModules.classes,
       deferRouteConditions: true,
@@ -241,6 +243,7 @@ const pageTemplateFor = (props: PageTemplateForOptions) => {
 
 const buildPage = async (props: BuildPageOptions): Promise<BuiltPage> => {
   const { config, cssModuleCache, entry, registry, routeHookDependenciesCache, template } = props;
+
   const source = interpolateRouteData({
     routeContext: entry.routeContext,
     routeData: entry.routeData,
@@ -274,6 +277,7 @@ const buildPage = async (props: BuildPageOptions): Promise<BuiltPage> => {
           html: assetHtml,
           pageRoute: entry.publicRoute,
         });
+
   const shared = template?.dependencies
     ? { dependencies: template.dependencies, html: linkedHtml }
     : await resolveSharedDependencies({

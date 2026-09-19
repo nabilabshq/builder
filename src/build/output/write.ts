@@ -72,5 +72,8 @@ export const writeDevPage = async ({ config, page }: { config: NabiConfig; page:
     types: ["script", "stylesheet"],
   });
 
-  await writeDevPageOutput({ config, page });
+  await writeDevPageOutput({
+    config,
+    page,
+  });
 };

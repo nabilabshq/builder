@@ -18,7 +18,13 @@ export const writeBuild = async (props: BuildWriteOptions) => {
 
   try {
     onStage?.("writing");
-    await writeHybridBuild({ config, copyAssets, mode, pages, temporary });
+    await writeHybridBuild({
+      config,
+      copyAssets,
+      mode,
+      pages,
+      temporary,
+    });
 
     if (atomic) {
       await replaceOutput(config, temporary, onStage);

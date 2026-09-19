@@ -22,9 +22,14 @@ export const minifyHtml = (html: string) =>
   });
 
 export const minifyJs = async (javascript: string): Promise<string> => {
-  const result = await minifyJavaScript(javascript, { compress: true, mangle: true });
+  const result = await minifyJavaScript(javascript, {
+    compress: true,
+    mangle: true,
+  });
 
-  if (!result.code) throw new Error("JavaScript minifier produced no output.");
+  if (!result.code) {
+    throw new Error("JavaScript minifier produced no output.");
+  }
 
   return result.code;
 };

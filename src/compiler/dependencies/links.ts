@@ -32,7 +32,9 @@ export const rewriteAssetReferences = ({ config, html }: RewriteAssetReferencesP
 
   const visit = (node: HtmlNode) => {
     for (const attribute of node.attrs ?? []) {
-      if (attribute.value.includes("@assets/")) attribute.value = assetValue(attribute.value, config);
+      if (attribute.value.includes("@assets/")) {
+        attribute.value = assetValue(attribute.value, config);
+      }
     }
 
     for (const child of node.childNodes ?? []) {
@@ -93,7 +95,13 @@ export const rewriteInternalLinks = ({ config, html, pageRoute }: RewriteInterna
     if (node.tagName === "a") {
       const href = node.attrs?.find((attribute) => attribute.name === "href");
 
-      if (href) href.value = internalLink({ config, pageRoute, value: href.value });
+      if (href) {
+        href.value = internalLink({
+          config,
+          pageRoute,
+          value: href.value,
+        });
+      }
     }
 
     for (const child of node.childNodes ?? []) {

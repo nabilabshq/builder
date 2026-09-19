@@ -82,7 +82,10 @@ export const processTemplate = ({ forwardedProps, nodes, props, slots }: Process
         if (attribute.name === propsPlaceholderAttribute) {
           attributes.push(...forwardedProps.map((item) => ({ ...item })));
         } else {
-          attributes.push({ ...attribute, value: interpolateValue(attribute.value, props) });
+          attributes.push({
+            ...attribute,
+            value: interpolateValue(attribute.value, props),
+          });
         }
       }
 

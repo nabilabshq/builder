@@ -183,8 +183,9 @@ export class ComponentRegistry {
 
     const caseMismatch = [...this.components.keys()].find((key) => key.toLowerCase() === safeRef.toLowerCase());
 
-    if (caseMismatch)
+    if (caseMismatch) {
       throw new NabiError(`Component ref must match its source path exactly: "${safeRef}". Use "${caseMismatch}".`);
+    }
   }
 
   expectedPath(ref: unknown) {
