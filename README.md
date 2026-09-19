@@ -1,59 +1,51 @@
 # Nabi Builder
 
-`@nabilabs/builder` is a deterministic static HTML builder for landing pages and multi-page websites. Components are resolved at build time, so the output contains plain HTML, CSS, JavaScript, and assets with no client runtime.
+@nabilabs/builder is a deterministic static HTML builder for landing pages and multi-page websites. Components are resolved during the build, so the output is plain HTML, CSS, JavaScript, and assets with no client component runtime.
 
-## Installation
+## Create a project
+
+```bash
+bun create @nabilabs/builder my-site
+cd my-site
+bun run dev
+```
+
+This command runs the dedicated @nabilabs/create-builder package and creates a ready-to-use Nabi project.
+
+## Migrate from 0.1
+
+Version 0.2 removes `nabi init`; create new projects with `bun create @nabilabs/builder` instead.
+
+Global component refs must now be namespaced. Move each old component and update its ref:
+
+```text
+src/shared/components/button/index.html -> src/ui/button/index.html
+<use ref="button" />                    -> <use ref="ui/button" />
+```
+
+Page-local components now use `@` directories and refs:
+
+```text
+src/pages/jobs/components/card/index.html -> src/pages/jobs/@card/index.html
+<use ref="card" />                       -> <use ref="@card" />
+```
+
+The `build()` result no longer includes `routes`; use `pages`. The `dev.open` option was removed, and `sharedDir`
+must remain inside `srcDir`.
+
+## Add Builder to an existing project
 
 ```bash
 bun add -d @nabilabs/builder
 ```
 
-## Initialize a project
-
-Create a small Nabi starter project in the current directory:
-
-```bash
-bunx -p @nabilabs/builder nabi init
-```
-
-Pass a directory to create the starter there:
-
-```bash
-bunx -p @nabilabs/builder nabi init my-site
-```
-
-The starter contains two pages, three shared components, shared CSS, and a shared JavaScript file. It also adds missing Nabi scripts to `package.json` without replacing existing scripts. When `package.json` is absent, Nabi runs `bun init -y` and installs `@nabilabs/builder` as a development dependency. The command is safe to run repeatedly and never overwrites existing starter files:
-
-```text
-src/
-  pages/
-    index.html
-    project/
-      index.html
-  shared/
-    components/
-      button/
-        index.html
-        style.css
-      head/
-        index.html
-      footer/
-        index.html
-        style.css
-    styles/
-      base.css
-    js/
-      site.js
-```
-
-The generated package scripts are:
+Add the project commands to package.json:
 
 ```json
 {
   "scripts": {
-    "dev": "nabi dev",
     "build": "nabi build",
-    "build:inline": "nabi build --mode inline"
+    "dev": "nabi dev"
   }
 }
 ```
@@ -61,175 +53,160 @@ The generated package scripts are:
 ## Commands
 
 ```bash
-bun run dev
-bun run build
-nabi init [directory]
-nabi build --mode inline
+nabi build [--mode split|inline|body]
+nabi dev [--port <port>]
 nabi clean
 ```
+
+The build command defaults to split mode. The dev server starts on port 2111 unless a port is configured or passed with --port.
 
 ## Project structure
 
 ```text
 src/
+  data/
+    posts.json
   pages/
     index.html
     about/
       index.html
-    components/             # Optional components local to this page directory
-  shared/
-    components/
-      button/
+    blog/
+      [post]/
+        _route.json
         index.html
-        style.css
-        script.js
-    styles/
-      base.css
-    js/
-      site.js
+        404.html
+      @card/
+        index.html
+  ui/
+    button/
+      index.html
+      style.css
+  modules/
+    hero/
+      index.html
+  shared/
     assets/
       img/
         logo.svg
+    js/
+      site.js
+    styles/
+      base.css
 nabi.config.js
 ```
 
-Components in `pages/**/components` override components with the same ref from `shared/components` for pages in that directory. Shared components remain the fallback.
-
-## File routing
-
-Routes are generated directly from files:
-
-| Source file                        | URL                | Output file                       |
-| ---------------------------------- | ------------------ | --------------------------------- |
-| `pages/index.html`                 | `/`                | `dist/index.html`                 |
-| `pages/about.html`                 | `/about`           | `dist/about/index.html`           |
-| `pages/rabota/index.html`          | `/rabota`          | `dist/rabota/index.html`          |
-| `pages/rabota/students/index.html` | `/rabota/students` | `dist/rabota/students/index.html` |
-
-Both `/about` and `/about/` resolve to the same page. Route collisions stop the build with a source-file error.
+Pages are stored in src/pages. Global components can live in any other top-level namespace under src, except shared and pages. Shared styles, scripts, and assets are opt-in resources.
 
 ## Components
 
-Use the HTML-only `<use>` DSL:
+Use the HTML-only use element:
 
 ```html
-<use ref="button" href="/rabota" variant="primary">Open jobs</use>
+<use ref="ui/button" variant="primary" size="fill" href="/jobs">Open jobs</use>
 ```
 
-`ref` selects the component and is not forwarded to the output. Every other attribute becomes a component prop.
-
-`shared/components/button/index.html`:
+Global component refs are namespaced. The source file src/ui/button/index.html is referenced as ui/button. A component can also be a file, for example src/modules/hero.html becomes modules/hero.
 
 ```html
 ---
-variants: primary | secondary
+variant: primary | filled
+size: hug | fill
 ---
 
-<a class="button button--{{variant}}" href="{{href}}" {{...props}}>
-  <slot></slot>
-</a>
+<button class="button {{class}}" data-variant="{{variant}}" data-size="{{size}}" {{...props}}>
+  <slot />
+</button>
 ```
 
-The frontmatter block is build metadata and is removed from the generated HTML. `{{...props}}` forwards attributes that are not consumed by `{{prop}}` placeholders.
+The frontmatter declares optional prop values for editor completion. The variants key declares values for variant; every other key declares values for a prop with the same name. The ref attribute is not emitted. Other attributes become props, and {{...props}} forwards attributes that were not consumed by a placeholder.
 
-Build output:
-
-```html
-<a class="button button--primary" href="/rabota">Open jobs</a>
-```
-
-Components can be nested. Missing refs, invalid refs, circular dependencies, and invalid slots stop the build with file and location details. HTML `<use>` is compiled; native SVG `<use href="#icon">` remains unchanged.
-
-### Prop options
-
-Component frontmatter can declare finite prop values for editor completion:
+Components support default and named slots:
 
 ```html
----
-variants: primary | secondary
-size: compact | spacious
----
-
-<a class="button button--{{variant}}" data-size="{{size}}"><slot></slot></a>
-```
-
-`variants` defines options for the `variant` prop. Any other key defines options for a prop with the same name. The Language Server suggests `primary` and `secondary` inside `variant=""`.
-
-## Slots
-
-Default content is rendered by `<slot></slot>`. Named content is rendered by `<slot name="..."></slot>`.
-
-```html
-<use ref="card" title="Pro plan">
+<use ref="ui/card" title="Pro">
   <p slot="header">Recommended</p>
-  <p>Default card content.</p>
-  <use ref="button" slot="footer" href="/students" variant="primary">Continue</use>
+  <p>Default content</p>
 </use>
 ```
 
 ```html
-<article class="card">
+<article>
   <header>
-    <slot name="header"></slot>
+    <slot name="header" />
   </header>
   <h2>{{title}}</h2>
   <main>
-    <slot></slot>
+    <slot />
   </main>
-  <footer>
-    <slot name="footer"></slot>
-  </footer>
 </article>
 ```
 
-Slot attributes are removed from the final HTML. Slots accept text, HTML, comments, and nested components. Fallback content is supported:
+Use self-closing syntax when no content is projected:
 
 ```html
-<slot name="header"><h2>Default title</h2></slot>
+<use ref="ui/button" href="/jobs" />
 ```
 
-Each component invocation has an isolated slot scope. Named slots must be direct children of the calling `<use>` element.
+Components whose root element is head contribute their contents to the page head.
 
-## Head components
+### Local components
 
-A component whose root element is `<head>` contributes its content to the document head:
+A directory beginning with @ inside pages defines components local to that page subtree. The nearest matching component wins:
+
+```text
+src/pages/
+  @header/index.html              -> @header
+  partners/
+    @header/index.html            -> @header for partners pages
+    index.html
+```
 
 ```html
-<use ref="head"></use>
+<use ref="@header" />
 ```
 
-This is useful for shared metadata, fonts, and page-level resource declarations.
+Local components are private to their owner directory and its descendants. Use a global namespaced component when it must be available outside that subtree.
 
-## CSS and JavaScript
+## CSS and JavaScript resources
 
-Page resources are colocated with their page:
-
-```text
-pages/rabota/index.html
-pages/rabota/style.css
-pages/rabota/script.js
-```
-
-Regular page files use matching filenames instead:
+Page resources are colocated with a page:
 
 ```text
+pages/jobs/index.html
+pages/jobs/style.css
+pages/jobs/script.js
+
 pages/about.html
 pages/about.css
 pages/about.js
 ```
 
-Component resources are colocated with the component:
+Component resources follow the same convention:
 
 ```text
-shared/components/card/style.css
-shared/components/card/script.js
+ui/card/index.html
+ui/card/style.css
+ui/card/script.js
 ```
 
-Only resources used by a page are emitted for that page. CSS and JavaScript follow deterministic component resolution order.
+Only resources for components used by a page are emitted. Their order follows component resolution.
 
-## Shared CSS and JavaScript
+### CSS Modules
 
-Shared files are explicit dependencies, not global injections:
+Put module.css or a file ending in .module.css next to a page or component:
+
+```text
+pages/jobs/index.html
+pages/jobs/module.css
+ui/card/index.html
+ui/card/card.module.css
+```
+
+Class names declared in those files are automatically scoped and rewritten in the corresponding page or component HTML. Module CSS is emitted only for pages that use it.
+
+## Shared resources
+
+Shared files are explicit dependencies rather than global injections:
 
 ```html
 <link use="base.css" />
@@ -239,62 +216,230 @@ Shared files are explicit dependencies, not global injections:
 <script use="core/utm.js" type="module"></script>
 ```
 
-Resolution:
+They resolve relative to src/shared/styles and src/shared/js:
 
 ```text
-<link use="core/normalize.css">  → shared/styles/core/normalize.css
-<script use="core/utm.js">       → shared/js/core/utm.js
+shared/styles/core/normalize.css
+shared/js/core/utm.js
 ```
 
-The final HTML keeps ordinary URLs and all other attributes:
-
-```html
-<link rel="stylesheet" media="screen" href="/styles/core/normalize.css" />
-<script defer src="/js/site.js"></script>
-```
-
-Only declared shared files are copied. `use` cannot be combined with `href` on `<link>` or `src` on `<script>`.
+The build preserves other attributes and writes normal resource URLs in split mode. The use attribute cannot be combined with href on link or src on script.
 
 ## Assets
 
-Place binary assets in `shared/assets` and reference them with `@assets`:
+Place binary assets in src/shared/assets and reference them with @assets:
 
 ```html
 <img src="@assets/img/logo.svg" alt="Nabi" />
 ```
 
-Assets are copied to `dist/assets` without transformation. A CDN base URL is optional:
+Assets are copied to dist/assets. A CDN base URL is optional:
 
 ```js
 export default {
   assets: {
-    mode: "copy",
     baseUrl: "https://cdn.example.com/site-assets",
+    mode: "copy",
   },
 };
 ```
 
-## Base route and links
+## Static routes
 
-Mount a project below a path:
+Routes are generated from page files:
+
+| Source file                    | URL            | Output file                   |
+| ------------------------------ | -------------- | ----------------------------- |
+| pages/index.html               | /              | dist/index.html               |
+| pages/about.html               | /about         | dist/about/index.html         |
+| pages/jobs/index.html          | /jobs          | dist/jobs/index.html          |
+| pages/jobs/students/index.html | /jobs/students | dist/jobs/students/index.html |
+
+Both /about and /about/ resolve to the same page. A route collision stops the build and identifies every source that generated it.
+
+### Base route
+
+Mount the project below a path:
 
 ```js
 export default {
-  baseRoute: "/partner/rabota",
+  baseRoute: "/partner/jobs",
 };
 ```
 
-Then `pages/students/index.html` serves at `/partner/rabota/students`. Internal root-relative links are rewritten automatically:
+Root-relative internal links are rewritten automatically:
 
 ```html
-<a href="/">Home</a> <a href="/students">Students</a>
+<nav>
+  <a href="/">Home</a>
+  <a href="/students">Students</a>
+</nav>
 ```
+
+With the configuration above, the generated URLs become /partner/jobs and /partner/jobs/students. Relative links
+such as ./students and ../ resolve from the current route. External URLs, hashes, mailto, tel, and CDN URLs are
+unchanged.
+
+## Dynamic routes
+
+Use a bracketed directory or filename segment for a dynamic route. Every dynamic segment needs a JSON route file named _route.json by default.
+
+```text
+src/
+  data/
+    cities.json
+  pages/
+    jobs/
+      [city]/
+        _route.json
+        index.html
+```
+
+```json
+{
+  "@data": "cities.json",
+  "remote": {
+    "name": "Remote"
+  }
+}
+```
+
+```json
+{
+  "almaty": {
+    "name": "Almaty",
+    "seo": {
+      "title": "Jobs in Almaty"
+    }
+  },
+  "astana": {
+    "name": "Astana"
+  }
+}
+```
+
+The route file above generates /jobs/almaty, /jobs/astana, and /jobs/remote. Local records supplement or override records loaded through @data. A route file can also be a simple array of slugs.
+
+Use route data in an HTML page or component attribute with {{:segment.property}}:
 
 ```html
-<a href="/partner/rabota">Home</a> <a href="/partner/rabota/students">Students</a>
+<h1>{{:city.name}}</h1>
+<meta property="og:title" content="{{:city.seo.title}}" />
 ```
 
-Relative links resolve from the current page route. External URLs, hashes, `mailto:`, `tel:`, and CDN URLs are unchanged.
+### Route data and component props
+
+The colon selects a dynamic route value. Use `{{:...}}` in a page when passing route data to a component:
+
+```html
+<use ref="ui/features" active="{{:page.features.combo}}"> Combo meals </use>
+```
+
+Inside the component, omit the colon. `{{active}}` is the component prop received from the use element:
+
+```html
+<article data-active="{{active}}">
+  <slot />
+</article>
+```
+
+For nested dynamic segments, use @when to limit a record to parent values:
+
+```json
+{
+  "students": {
+    "@when": {
+      "city": ["almaty", "astana"]
+    }
+  }
+}
+```
+
+An optional _route.js beside the JSON file may export a default function. It receives route and, when present, props. Return an object to merge more page data or null to omit that route.
+
+```js
+export default ({ props, route }) => {
+  if (!props?.enabled) return null;
+
+  return {
+    title: props.title ?? route.city,
+  };
+};
+```
+
+The Language Server provides completion, diagnostics, document links, and route-data suggestions for dynamic routes.
+
+## Conditional content
+
+`<if>` keeps one branch at build time and removes the directive from the output. Its required `when` attribute must resolve to `true` or `false`; an empty or missing route value also selects the false branch. An optional `<else>` supplies that branch.
+
+```html
+<if when="{{:page.features.combo}}">
+  <article id="feature-combo">Combo meals</article>
+  <else>
+    <article id="feature-default">Available benefits</article>
+  </else>
+</if>
+```
+
+To use route data inside a component, pass it as a prop from the page:
+
+```html
+<use ref="ui/features" active="{{:page.features.combo}}" />
+```
+
+src/ui/features/index.html:
+
+```html
+<if when="{{active}}">
+  <article>Combo meals</article>
+</if>
+```
+
+The selected branch is compiled before its components and resources are resolved. The Language Server suggests route paths in `when="{{:...}}"` and reports paths that are not present in route data.
+
+## Error pages
+
+Place a file named 404.html in pages or in a nested page directory:
+
+```text
+pages/
+  404.html
+  jobs/
+    404.html
+```
+
+The build emits error pages without registering them as ordinary routes. The dev server selects the closest applicable error page for a missing request. Dynamic error pages receive the same route data as the matching dynamic page.
+
+Configure another file name when needed:
+
+```js
+export default {
+  errorPageFileName: "missing",
+};
+```
+
+## Build modes
+
+Split is the default mode. It writes complete page HTML plus generated style.css and script.js files, copied shared dependencies, assets, and manifest.json.
+
+```bash
+nabi build
+```
+
+Inline embeds page, component, and declared shared styles and scripts in a complete HTML document.
+
+```bash
+nabi build --mode inline
+```
+
+Body emits a wrapper-free HTML fragment. It inlines styles, retains JSON script elements in the fragment, and writes executable scripts as separate files.
+
+```bash
+nabi build --mode body
+```
+
+Set defaultBuildMode to select a mode without passing --mode.
 
 ## Development server
 
@@ -302,85 +447,55 @@ Relative links resolve from the current page route. External URLs, hashes, `mail
 nabi dev --port 2111
 ```
 
-The development server uses the same routing, component, and dependency pipeline as the production build. It watches `src`, serves unminified output, and injects live reload. CSS updates use an atomic stylesheet swap; HTML and JavaScript updates reload the page.
+The dev server uses the production routing and component pipeline, serves assets directly from source, and injects live reload. CSS changes swap stylesheets without a full reload. It tracks source dependencies, rebuilds active affected pages eagerly, and rebuilds inactive pages when requested. It remains available after an initial build error and recovers when the source is corrected.
 
-## Build modes
-
-`split` is the default mode. It writes page HTML and generated `style.css` and `script.js` files.
-
-```bash
-nabi build
-```
-
-`inline` embeds page and component CSS and JavaScript into HTML. Explicit shared dependencies remain external URLs.
-
-```bash
-nabi build --mode inline
-```
+When developing a linked Builder checkout, run bun run dev. It rebuilds dist after source changes and restarts the supervised Nabi dev worker.
 
 ## Configuration
 
-All fields are optional:
+All configuration fields are optional:
 
 ```js
 export default {
-  pagesDir: "src/pages",
-  sharedDir: "src/shared",
-  outDir: "dist",
+  assets: {
+    baseUrl: "",
+    mode: "copy",
+  },
   baseRoute: "",
+  dataDir: "data",
   defaultBuildMode: "split",
   dev: {
     port: 2111,
-    open: false,
   },
-  assets: {
-    mode: "copy",
-    baseUrl: "",
-  },
-  minify: {
-    html: false,
-    css: true,
-    js: false,
-  },
+  errorPageFileName: "404",
   images: {
     optimize: false,
   },
+  minify: {
+    css: true,
+    html: false,
+    js: false,
+  },
+  outDir: "dist",
+  pagesDir: "pages",
+  routeFileName: "_route",
+  sharedDir: "shared",
+  srcDir: "src",
 };
 ```
 
-`nabi build` minifies CSS by default. Set `minify.html` or `minify.js` to `true` when needed. Development output remains readable.
+All configured directory paths must stay within the project. Source and output directories cannot overlap.
 
 ## Language Server
 
-`@nabilabs/builder` includes a standard Language Server Protocol server:
+@nabilabs/builder includes a standard Language Server Protocol server:
 
 ```bash
 nabi-language-server --stdio
 ```
 
-It provides completion for component refs, props, prop values, named slots, shared CSS, and shared JavaScript. It also provides definitions and diagnostics using the same project rules as `nabi build`.
-
-For VS Code, install the Nabi extension. It finds the nearest local `@nabilabs/builder` package and starts its matching Language Server automatically.
-
-## JavaScript quality checks
-
-```bash
-bun run lint
-bun run format:check
-bun run check
-bun run pack:check
-```
-
-`bun run check` runs ESLint, Prettier validation, and the complete test suite. `bun run pack:check` verifies the npm package contents. The same quality check runs automatically before publishing.
-
-## Public API
-
-```js
-import { build, clean, compilePage, discoverPages, init, loadConfig, startDev } from "@nabilabs/builder";
-
-await build({ mode: "split" });
-```
+It provides completion, definitions, diagnostics, document links, component prop values, named slots, shared resources, and dynamic-route metadata. The Nabi VS Code extension finds the nearest local Builder package and starts its matching server.
 
 ## Limits
 
-Nabi intentionally has no client component runtime, hydration, JSX, template expressions, loops, implicit JavaScript execution, SCSS/PostCSS pipeline, filename hashing, or automatic image optimization.
+Nabi intentionally has no client component runtime, hydration, JSX, template expressions, loops, implicit JavaScript execution in templates, SCSS or PostCSS pipeline, filename hashing, or automatic image optimization.

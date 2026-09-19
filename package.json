@@ -1,6 +1,6 @@
 {
   "name": "@nabilabs/builder",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "publisher": "nabilabs",
   "displayName": "Nabi Builder",
   "description": "Deterministic static HTML component builder",
